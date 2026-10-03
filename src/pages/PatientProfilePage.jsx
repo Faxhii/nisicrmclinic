@@ -7,7 +7,7 @@ import {
   CreditCard, ChevronRight, Plus, Clock, User,
   Heart, Edit, Trash2, X, AlertCircle, Save, Check
 } from 'lucide-react';
-import { PatientsService, VisitsService, PaymentsService, AppointmentsService } from '../services/dataService';
+import { PatientsService, VisitsService, PaymentsService, AppointmentsService, reconcilePayments } from '../services/dataService';
 import { formatCurrency, formatDate, formatTime, getInitials } from '../utils/helpers';
 import Modal from '../components/Modal';
 
@@ -59,10 +59,14 @@ export default function PatientProfilePage() {
 
   useEffect(() => {
     loadData();
+    const handleSync = () => loadData();
+    window.addEventListener('nisiclinic_data_synced', handleSync);
+    return () => window.removeEventListener('nisiclinic_data_synced', handleSync);
   }, [id]);
 
   function loadData() {
     setLoading(true);
+    reconcilePayments();
     const p = PatientsService.getById(id);
     if (!p) {
       navigate('/patients');
@@ -141,6 +145,9 @@ export default function PatientProfilePage() {
     setEditVisitModal(false);
     setEditingVisit(null);
     loadData();
+    try {
+      window.dispatchEvent(new Event('nisiclinic_data_synced'));
+    } catch {}
   }
 
   function promptDeleteVisit(visit) {

@@ -5,7 +5,7 @@ import {
   Calendar, CheckCircle2, Clock, ArrowUpRight, Search,
   PieChart, BarChart3, ChevronRight, Filter
 } from 'lucide-react';
-import { PaymentsService, PatientsService, VisitsService } from '../services/dataService';
+import { PaymentsService, PatientsService, VisitsService, reconcilePayments } from '../services/dataService';
 import { formatCurrency, formatDate, formatDateShort, getInitials } from '../utils/helpers';
 
 export default function PaymentsPage() {
@@ -24,9 +24,17 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     loadData();
+    const handleSync = () => loadData();
+    window.addEventListener('nisiclinic_data_synced', handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('nisiclinic_data_synced', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
   }, []);
 
   function loadData() {
+    reconcilePayments();
     setPayments(PaymentsService.getAll());
     setVisits(VisitsService.getAll());
     setPatients(PatientsService.getAll());

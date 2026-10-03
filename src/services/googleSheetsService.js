@@ -11,7 +11,11 @@ const STORAGE_KEYS = {
 
 export const GoogleSheetsService = {
   getUrl() {
-    return localStorage.getItem(STORAGE_KEYS.URL) || '';
+    const local = localStorage.getItem(STORAGE_KEYS.URL);
+    if (local && local.trim()) return local.trim();
+    const envUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_SHEETS_URL;
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim()) return envUrl.trim();
+    return '';
   },
 
   setUrl(url) {
@@ -80,7 +84,7 @@ export const GoogleSheetsService = {
     }
   },
 
-  // Pull all tables from Google Sheet into localStorage
+  // Pull all tables from Google Sheet into localStorage with smart merge
   async pullFromSheet() {
     const url = this.getUrl();
     if (!url) throw new Error('Google Apps Script URL is not configured.');
@@ -100,27 +104,70 @@ export const GoogleSheetsService = {
       throw new Error(res.message || 'Failed to retrieve data from Google Sheet.');
     }
 
-    const { patients, visits, appointments, payments } = res.data;
+    const { patients: sheetPatients, visits: sheetVisits, appointments: sheetAppts, payments: sheetPayments } = res.data;
 
-    if (Array.isArray(patients)) {
-      localStorage.setItem('nisiclinic_patients', JSON.stringify(patients));
-    }
-    if (Array.isArray(visits)) {
-      localStorage.setItem('nisiclinic_visits', JSON.stringify(visits));
-    }
-    if (Array.isArray(appointments)) {
-      localStorage.setItem('nisiclinic_appointments', JSON.stringify(appointments));
-    }
-    if (Array.isArray(payments)) {
-      localStorage.setItem('nisiclinic_payments', JSON.stringify(payments));
-    }
+    // Smart merge to preserve any items created locally on this device (e.g. on a new laptop) before connecting
+    const mergeData = (storageKey, idField, sheetItems) => {
+      let localItems = [];
+      try {
+        const raw = localStorage.getItem(storageKey);
+        localItems = raw ? JSON.parse(raw) : [];
+      } catch {
+        localItems = [];
+      }
+
+      if (!Array.isArray(sheetItems)) sheetItems = [];
+
+      const map = new Map();
+      sheetItems.forEach(item => {
+        if (item && item[idField]) map.set(String(item[idField]), item);
+      });
+
+      const localOnly = [];
+      localItems.forEach(item => {
+        if (item && item[idField]) {
+          const id = String(item[idField]);
+          if (!map.has(id)) {
+            // Keep local item that isn't on sheet yet
+            map.set(id, item);
+            localOnly.push(item);
+          }
+        }
+      });
+
+      const merged = Array.from(map.values());
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+      return { merged, localOnly };
+    };
+
+    const pResult = mergeData('nisiclinic_patients', 'patient_id', sheetPatients);
+    const vResult = mergeData('nisiclinic_visits', 'visit_id', sheetVisits);
+    const aResult = mergeData('nisiclinic_appointments', 'appointment_id', sheetAppts);
+    const payResult = mergeData('nisiclinic_payments', 'payment_id', sheetPayments);
 
     this.setLastSynced();
+
+    // If there were local items not on the sheet, push them to the sheet so all devices receive them
+    const hasLocalOnly = pResult.localOnly.length > 0 || vResult.localOnly.length > 0 || 
+                         aResult.localOnly.length > 0 || payResult.localOnly.length > 0;
+    if (hasLocalOnly && this.getAutoSync()) {
+      this.pushToSheet({
+        patients: pResult.merged,
+        visits: vResult.merged,
+        appointments: aResult.merged,
+        payments: payResult.merged
+      }).catch(err => console.warn('Background sync back to sheet error:', err));
+    }
+
+    try {
+      window.dispatchEvent(new Event('nisiclinic_data_synced'));
+    } catch {}
+
     return {
-      patientsCount: patients?.length || 0,
-      visitsCount: visits?.length || 0,
-      appointmentsCount: appointments?.length || 0,
-      paymentsCount: payments?.length || 0
+      patientsCount: pResult.merged.length,
+      visitsCount: vResult.merged.length,
+      appointmentsCount: aResult.merged.length,
+      paymentsCount: payResult.merged.length
     };
   },
 

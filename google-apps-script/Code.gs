@@ -214,6 +214,18 @@ function doPost(e) {
       return jsonResponse({ status: 'success', item: payload.payment });
     }
 
+    // Update payment
+    if (action === 'updatePayment' && payload.payment_id && payload.updates) {
+      updateRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id, payload.updates, SCHEMAS.Payments);
+      return jsonResponse({ status: 'success', id: payload.payment_id });
+    }
+
+    // Delete payment
+    if (action === 'deletePayment' && payload.payment_id) {
+      deleteRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id);
+      return jsonResponse({ status: 'success', id: payload.payment_id });
+    }
+
     return jsonResponse({ status: 'error', message: 'Unknown action: ' + action });
   } catch (err) {
     return jsonResponse({ status: 'error', message: err.toString() });

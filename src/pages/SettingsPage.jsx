@@ -8,7 +8,8 @@ import { GoogleSheetsService } from '../services/googleSheetsService';
 import {
   clearAllData, restoreDemoData, hasDemoData,
   getAllDataForExport, importAllDataFromJson,
-  PatientsService, VisitsService, AppointmentsService, PaymentsService
+  PatientsService, VisitsService, AppointmentsService, PaymentsService,
+  reconcilePayments
 } from '../services/dataService';
 import { useToast } from '../contexts/ToastContext';
 import Modal from '../components/Modal';
@@ -130,6 +131,14 @@ function doPost(e) {
       getOrCreateSheet(SHEET_NAMES.PAYMENTS).appendRow(objectToRow(payload.payment, SCHEMAS.Payments));
       return jsonResponse({ status: 'success' });
     }
+    if (action === 'updatePayment' && payload.payment_id && payload.updates) {
+      updateRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id, payload.updates, SCHEMAS.Payments);
+      return jsonResponse({ status: 'success' });
+    }
+    if (action === 'deletePayment' && payload.payment_id) {
+      deleteRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id);
+      return jsonResponse({ status: 'success' });
+    }
     return jsonResponse({ status: 'error', message: 'Unknown action' });
   } catch(err) {
     return jsonResponse({ status: 'error', message: err.toString() });
@@ -184,7 +193,7 @@ export default function SettingsPage() {
     });
   }
 
-  const handleSaveUrl = () => {
+  const handleSaveUrl = async () => {
     if (!sheetsUrl.trim()) {
       GoogleSheetsService.setUrl('');
       setTestResult(null);
@@ -200,7 +209,22 @@ export default function SettingsPage() {
 
     GoogleSheetsService.setUrl(sheetsUrl.trim());
     toast.success('Google Sheets Web App URL saved!');
-    refreshState();
+
+    // Automatically pull and sync right away so the user doesn't have to manually click pull on a new device!
+    setSyncing(true);
+    try {
+      const counts = await GoogleSheetsService.pullFromSheet();
+      reconcilePayments();
+      toast.success(`Connected & Synced! Loaded ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.paymentsCount} payments.`);
+      try {
+        window.dispatchEvent(new Event('nisiclinic_data_synced'));
+      } catch {}
+    } catch (err) {
+      console.warn('Initial sync notice:', err);
+    } finally {
+      setSyncing(false);
+      refreshState();
+    }
   };
 
   const handleTestConnection = async () => {
@@ -240,7 +264,11 @@ export default function SettingsPage() {
     setSyncing(true);
     try {
       const counts = await GoogleSheetsService.pullFromSheet();
-      toast.success(`Synced from Google Sheets: ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.appointmentsCount} appointments.`);
+      reconcilePayments();
+      toast.success(`Synced from Google Sheets: ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.paymentsCount} payments, ${counts.appointmentsCount} appointments.`);
+      try {
+        window.dispatchEvent(new Event('nisiclinic_data_synced'));
+      } catch {}
       refreshState();
     } catch (err) {
       toast.error(err.message || 'Failed to pull from Google Sheets.');

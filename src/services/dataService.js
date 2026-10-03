@@ -184,7 +184,7 @@ export const VisitsService = {
         visit_id: visit.visit_id,
         amount: amountPaid,
         payment_method: visitData.payment_method || 'Cash',
-        payment_date: visit.visit_date,
+        payment_date: visit.visit_date || new Date().toISOString().split('T')[0],
         notes: `Payment for visit - ${visit.treatment || 'Consultation'}`
       });
     }
@@ -205,12 +205,49 @@ export const VisitsService = {
   },
 
   update(visitId, updates) {
+    const visit = this.getById(visitId);
+    if (!visit) return null;
+
     if (updates.total_amount !== undefined || updates.amount_paid !== undefined) {
-      const visit = this.getById(visitId);
       const total = Number(updates.total_amount ?? visit?.total_amount) || 0;
       const paid = Number(updates.amount_paid ?? visit?.amount_paid) || 0;
       updates.balance = Math.max(0, total - paid);
+      updates.total_amount = total;
+      updates.amount_paid = paid;
+
+      // Keep Payments ledger synchronized with the visit amount_paid
+      const allPayments = getAll('payments');
+      const visitPayments = allPayments.filter(p => p.visit_id === visitId);
+      const currentRecordedPaid = visitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+      if (paid > currentRecordedPaid) {
+        // Payment amount increased or was added during edit
+        const delta = paid - currentRecordedPaid;
+        PaymentsService.create({
+          patient_id: visit.patient_id,
+          visit_id: visitId,
+          amount: delta,
+          payment_method: updates.payment_method || visit.payment_method || 'Cash',
+          payment_date: updates.visit_date || visit.visit_date || new Date().toISOString().split('T')[0],
+          notes: `Payment for visit - ${updates.treatment || visit.treatment || 'Consultation'}`
+        });
+      } else if (paid < currentRecordedPaid && visitPayments.length > 0) {
+        // Payment amount was decreased (e.g. correcting a mistake)
+        const delta = currentRecordedPaid - paid;
+        if (visitPayments.length === 1) {
+          const pay = visitPayments[0];
+          const newAmt = Math.max(0, (Number(pay.amount) || 0) - delta);
+          if (newAmt === 0) {
+            remove('payments', pay.payment_id, 'payment_id');
+            GoogleSheetsService.syncSingle('deletePayment', { payment_id: pay.payment_id });
+          } else {
+            update('payments', pay.payment_id, { amount: newAmt }, 'payment_id');
+            GoogleSheetsService.syncSingle('updatePayment', { payment_id: pay.payment_id, updates: { amount: newAmt } });
+          }
+        }
+      }
     }
+
     const result = update('visits', visitId, updates, 'visit_id');
     GoogleSheetsService.syncSingle('updateVisit', { visit_id: visitId, updates });
     return result;
@@ -316,6 +353,7 @@ export const AppointmentsService = {
 
 export const PaymentsService = {
   getAll() {
+    reconcilePayments();
     return getAll('payments').sort((a, b) => 
       new Date(b.payment_date) - new Date(a.payment_date)
     );
@@ -505,11 +543,52 @@ export const AuthService = {
 };
 
 // ============================================================
+// Auto-Reconciliation: Ensure every visit with amount_paid has a matching payment
+// ============================================================
+
+export function reconcilePayments() {
+  const visits = getAll('visits');
+  const payments = getAll('payments');
+  let changed = false;
+
+  visits.forEach(visit => {
+    const visitPaid = Number(visit.amount_paid) || 0;
+    if (visitPaid > 0) {
+      const visitPayments = payments.filter(p => p.visit_id === visit.visit_id);
+      const totalRecorded = visitPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      if (totalRecorded < visitPaid) {
+        const missingAmount = visitPaid - totalRecorded;
+        const newPayment = {
+          payment_id: generateId('PAY'),
+          patient_id: visit.patient_id,
+          visit_id: visit.visit_id,
+          amount: missingAmount,
+          payment_method: visit.payment_method || 'Cash',
+          payment_date: visit.visit_date || new Date().toISOString().split('T')[0],
+          notes: `Payment for visit - ${visit.treatment || visit.complaint || 'Consultation'}`,
+          created_at: visit.created_at || new Date().toISOString()
+        };
+        payments.push(newPayment);
+        GoogleSheetsService.syncSingle('createPayment', { payment: newPayment });
+        changed = true;
+      }
+    }
+  });
+
+  if (changed) {
+    saveAll('payments', payments);
+  }
+  return changed;
+}
+
+// ============================================================
 // Seed Data for Demo
 // ============================================================
 
 export function seedDemoData() {
-  // Never re-seed if the user explicitly clicked "Clear Demo Data"
+  // Never re-seed if Google Sheets is connected OR user explicitly cleared demo data
+  if (GoogleSheetsService.isConfigured()) return;
   if (localStorage.getItem(STORAGE_PREFIX + 'demo_cleared') === 'true') return;
 
   // Only seed if no data exists
