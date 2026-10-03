@@ -62,13 +62,13 @@ export default function NewPaymentPage() {
     setSaving(true);
     await new Promise(r => setTimeout(r, 400));
     try {
-      // Find the latest visit with balance for this patient to associate
+      // Find the latest visit with balance for this patient, or fallback to their latest visit
       const visits = VisitsService.getByPatient(selectedPatient.patient_id);
-      const visitWithBalance = visits.find(v => (Number(v.balance) || 0) > 0);
+      const targetVisit = visits.find(v => (Number(v.balance) || 0) > 0) || visits[0];
 
-      PaymentsService.create({
+      const payment = PaymentsService.create({
         patient_id: selectedPatient.patient_id,
-        visit_id: visitWithBalance?.visit_id || '',
+        visit_id: targetVisit?.visit_id || '',
         amount: Number(form.amount),
         payment_method: form.payment_method,
         payment_date: form.payment_date,
@@ -76,14 +76,22 @@ export default function NewPaymentPage() {
       });
 
       // Update the visit balance if associated
-      if (visitWithBalance) {
-        const newPaid = (Number(visitWithBalance.amount_paid) || 0) + Number(form.amount);
-        const newBalance = Math.max(0, (Number(visitWithBalance.total_amount) || 0) - newPaid);
-        VisitsService.update(visitWithBalance.visit_id, {
+      if (targetVisit) {
+        const currentTotal = Number(targetVisit.total_amount) || 0;
+        const newPaid = (Number(targetVisit.amount_paid) || 0) + Number(form.amount);
+        const newTotal = currentTotal > 0 ? currentTotal : Math.max(currentTotal, newPaid);
+        const newBalance = Math.max(0, newTotal - newPaid);
+
+        VisitsService.update(targetVisit.visit_id, {
+          total_amount: newTotal,
           amount_paid: newPaid,
           balance: newBalance
         });
       }
+
+      try {
+        window.dispatchEvent(new Event('nisiclinic_data_synced'));
+      } catch {}
 
       toast.success(`Payment of ${formatCurrency(form.amount)} recorded`);
       navigate(`/patients/${selectedPatient.patient_id}`);

@@ -84,6 +84,9 @@ export default function PatientProfilePage() {
   // -----------------------------------------------------------
   function openEditVisit(visit) {
     setEditingVisit(visit);
+    const allPayments = PaymentsService.getAll();
+    const visitPayment = allPayments.find(p => p.visit_id === visit.visit_id);
+
     setEditVisitForm({
       visit_date: visit.visit_date || '',
       complaint: visit.complaint || '',
@@ -91,11 +94,25 @@ export default function PatientProfilePage() {
       clinical_notes: visit.clinical_notes || '',
       treatment: visit.treatment || '',
       medicines: Array.isArray(visit.medicines) ? JSON.parse(JSON.stringify(visit.medicines)) : [],
-      total_amount: visit.total_amount ?? 0,
-      amount_paid: visit.amount_paid ?? 0,
-      follow_up_date: visit.follow_up_date || ''
+      total_amount: (visit.total_amount !== undefined && visit.total_amount !== null && visit.total_amount !== '') ? visit.total_amount : '',
+      amount_paid: (visit.amount_paid !== undefined && visit.amount_paid !== null && visit.amount_paid !== '') ? visit.amount_paid : '',
+      payment_method: visit.payment_method || visitPayment?.payment_method || 'Cash',
+      payment_notes: visitPayment?.notes || '',
+      follow_up: !!visit.follow_up_date,
+      follow_up_date: visit.follow_up_date || '',
+      dentist: visit.created_by || 'Dr. Nisi'
     });
     setEditVisitModal(true);
+  }
+
+  function setFollowUpPreset(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    setEditVisitForm(prev => ({
+      ...prev,
+      follow_up: true,
+      follow_up_date: d.toISOString().split('T')[0]
+    }));
   }
 
   function handleAddMedicine() {
@@ -138,7 +155,10 @@ export default function PatientProfilePage() {
       total_amount: total,
       amount_paid: paid,
       balance: balance,
-      follow_up_date: editVisitForm.follow_up_date
+      payment_method: editVisitForm.payment_method,
+      payment_notes: editVisitForm.payment_notes,
+      created_by: editVisitForm.dentist || editingVisit.created_by || 'Dr. Nisi',
+      follow_up_date: editVisitForm.follow_up ? editVisitForm.follow_up_date : ''
     });
 
     toast.success('Visit details updated successfully!');
@@ -264,17 +284,17 @@ export default function PatientProfilePage() {
           </div>
 
           <div className="profile-actions">
-            <button className="btn btn-primary" onClick={() => navigate(`/visits/new?patient=${id}`)}>
-              <FileText size={15} /> New Visit
+            <button className="btn btn-primary btn-sm" onClick={() => navigate(`/visits/new?patient=${id}`)}>
+              <FileText size={14} /> New Visit
             </button>
-            <button className="btn btn-secondary" onClick={() => navigate(`/appointments/new?patient=${id}`)}>
-              <Calendar size={15} /> Appointment
+            <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/appointments/new?patient=${id}`)}>
+              <Calendar size={14} /> Appointment
             </button>
-            <button className="btn btn-secondary" onClick={() => navigate(`/payments/new?patient=${id}`)}>
-              <CreditCard size={15} /> Payment
+            <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/payments/new?patient=${id}`)}>
+              <CreditCard size={14} /> Payment
             </button>
-            <button className="btn btn-secondary" onClick={openEditPatient}>
-              <Edit size={15} /> Edit Patient
+            <button className="btn btn-secondary btn-sm" onClick={openEditPatient}>
+              <Edit size={14} /> Edit Patient
             </button>
           </div>
         </div>
@@ -684,9 +704,23 @@ export default function PatientProfilePage() {
         size="lg"
       >
         <form onSubmit={handleSaveVisitEdit}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+          {/* Patient banner inside modal */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '8px 12px', background: 'var(--color-accent-light)',
+            borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-4)', fontSize: 'var(--font-size-xs)'
+          }}>
+            <span style={{ fontWeight: 600, color: 'var(--color-accent)' }}>
+              Patient: {patient.name} ({patient.patient_id})
+            </span>
+            <span style={{ color: 'var(--color-text-secondary)' }}>
+              ID: {editingVisit?.visit_id}
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
             <div className="form-group">
-              <label className="form-label">Visit Date</label>
+              <label className="form-label">Visit Date *</label>
               <input
                 type="date"
                 className="form-input"
@@ -697,14 +731,54 @@ export default function PatientProfilePage() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Follow-up Date</label>
+              <label className="form-label">Attending Doctor / Dentist</label>
+              <input
+                type="text"
+                className="form-input"
+                value={editVisitForm.dentist || 'Dr. Nisi'}
+                onChange={e => setEditVisitForm({ ...editVisitForm, dentist: e.target.value })}
+                placeholder="Dr. Nisi"
+              />
+            </div>
+          </div>
+
+          {/* Follow-up Section with Presets */}
+          <div style={{
+            padding: 'var(--space-3) var(--space-4)',
+            background: 'var(--color-bg)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border)',
+            marginBottom: 'var(--space-4)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-2)', marginBottom: editVisitForm.follow_up ? 'var(--space-2)' : 0 }}>
+              <label className="form-checkbox" style={{ margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={editVisitForm.follow_up}
+                  onChange={e => setEditVisitForm({ ...editVisitForm, follow_up: e.target.checked })}
+                />
+                <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Follow-up / Recall Required</span>
+              </label>
+
+              {editVisitForm.follow_up && (
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-ghost btn-xs" onClick={() => setFollowUpPreset(7)}>+1 Wk</button>
+                  <button type="button" className="btn btn-ghost btn-xs" onClick={() => setFollowUpPreset(14)}>+2 Wk</button>
+                  <button type="button" className="btn btn-ghost btn-xs" onClick={() => setFollowUpPreset(30)}>+1 Mo</button>
+                  <button type="button" className="btn btn-ghost btn-xs" onClick={() => setFollowUpPreset(180)}>+6 Mo (Recall)</button>
+                </div>
+              )}
+            </div>
+
+            {editVisitForm.follow_up && (
               <input
                 type="date"
                 className="form-input"
+                style={{ marginTop: 'var(--space-2)' }}
                 value={editVisitForm.follow_up_date}
                 onChange={e => setEditVisitForm({ ...editVisitForm, follow_up_date: e.target.value })}
               />
-            </div>
+            )}
           </div>
 
           <div className="form-group" style={{ marginBottom: 'var(--space-4)' }}>
@@ -819,50 +893,93 @@ export default function PatientProfilePage() {
 
           {/* Financials & Balance */}
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-            gap: 'var(--space-3)',
             padding: 'var(--space-4)',
             background: 'var(--color-surface-hover)',
             borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border)',
             marginBottom: 'var(--space-5)'
           }}>
-            <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Total Fee (₹)</label>
-              <input
-                type="number"
-                min="0"
-                className="form-input"
-                value={editVisitForm.total_amount}
-                onChange={e => setEditVisitForm({ ...editVisitForm, total_amount: e.target.value })}
-              />
+            <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <CreditCard size={15} /> Payment & Billing Details
             </div>
 
-            <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Amount Paid (₹)</label>
-              <input
-                type="number"
-                min="0"
-                className="form-input"
-                value={editVisitForm.amount_paid}
-                onChange={e => setEditVisitForm({ ...editVisitForm, amount_paid: e.target.value })}
-              />
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+              gap: 'var(--space-3)',
+              marginBottom: 'var(--space-3)'
+            }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontWeight: 600 }}>Total Fee (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 2300"
+                  className="form-input"
+                  value={editVisitForm.total_amount}
+                  onChange={e => setEditVisitForm({ ...editVisitForm, total_amount: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontWeight: 600 }}>Amount Paid (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 300"
+                  className="form-input"
+                  value={editVisitForm.amount_paid}
+                  onChange={e => setEditVisitForm({ ...editVisitForm, amount_paid: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontWeight: 600 }}>Balance Pending (₹)</label>
+                <div style={{
+                  height: '42px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '0 var(--space-3)',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--color-bg)',
+                  fontWeight: 700,
+                  color: (Number(editVisitForm.total_amount) - Number(editVisitForm.amount_paid)) > 0 ? 'var(--color-warning-text)' : 'var(--color-success)',
+                  border: '1px solid var(--color-border)'
+                }}>
+                  {formatCurrency(Math.max(0, Number(editVisitForm.total_amount) - Number(editVisitForm.amount_paid)))}
+                </div>
+              </div>
             </div>
 
-            <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Balance Pending (₹)</label>
-              <div style={{
-                height: '42px',
-                display: 'flex',
-                alignItems: 'center',
-                padding: '0 var(--space-3)',
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--color-bg)',
-                fontWeight: 700,
-                color: (Number(editVisitForm.total_amount) - Number(editVisitForm.amount_paid)) > 0 ? 'var(--color-warning-text)' : 'var(--color-success)',
-                border: '1px solid var(--color-border)'
-              }}>
-                {formatCurrency(Math.max(0, Number(editVisitForm.total_amount) - Number(editVisitForm.amount_paid)))}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+              gap: 'var(--space-3)'
+            }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Payment Method</label>
+                <select
+                  className="form-input"
+                  value={editVisitForm.payment_method}
+                  onChange={e => setEditVisitForm({ ...editVisitForm, payment_method: e.target.value })}
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="UPI">UPI (GPay / PhonePe / Paytm)</option>
+                  <option value="Card">Card</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Payment Remark / Notes</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Paid ₹300 advance, ₹2000 due next visit"
+                  value={editVisitForm.payment_notes}
+                  onChange={e => setEditVisitForm({ ...editVisitForm, payment_notes: e.target.value })}
+                />
               </div>
             </div>
           </div>

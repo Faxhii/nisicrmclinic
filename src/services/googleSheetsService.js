@@ -120,17 +120,47 @@ export const GoogleSheetsService = {
 
       const map = new Map();
       sheetItems.forEach(item => {
-        if (item && item[idField]) map.set(String(item[idField]), item);
+        if (item && item[idField]) map.set(String(item[idField]), { ...item });
       });
 
       const localOnly = [];
-      localItems.forEach(item => {
-        if (item && item[idField]) {
-          const id = String(item[idField]);
-          if (!map.has(id)) {
+      localItems.forEach(localItem => {
+        if (localItem && localItem[idField]) {
+          const id = String(localItem[idField]);
+          if (map.has(id)) {
+            // Item exists in both: merge field-by-field so local non-empty data is not wiped out
+            const sheetItem = map.get(id);
+            const merged = { ...sheetItem };
+
+            Object.keys(localItem).forEach(key => {
+              const lVal = localItem[key];
+              const sVal = sheetItem[key];
+
+              if (lVal !== undefined && lVal !== null && lVal !== '') {
+                // If sheet has blank or null, preserve local
+                if (sVal === undefined || sVal === null || sVal === '') {
+                  merged[key] = lVal;
+                }
+                // If financial amount (total_amount, amount_paid, balance, amount), prefer non-zero
+                else if (key === 'total_amount' || key === 'amount_paid' || key === 'balance' || key === 'amount') {
+                  if (Number(lVal) > 0 && (Number(sVal) === 0 || isNaN(Number(sVal)))) {
+                    merged[key] = Number(lVal);
+                  }
+                }
+                // If medicines array, preserve non-empty local array
+                else if (key === 'medicines') {
+                  if (Array.isArray(lVal) && lVal.length > 0 && (!Array.isArray(sVal) || sVal.length === 0)) {
+                    merged[key] = lVal;
+                  }
+                }
+              }
+            });
+
+            map.set(id, merged);
+          } else {
             // Keep local item that isn't on sheet yet
-            map.set(id, item);
-            localOnly.push(item);
+            map.set(id, localItem);
+            localOnly.push(localItem);
           }
         }
       });

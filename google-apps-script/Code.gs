@@ -245,16 +245,22 @@ function replaceSheetData(sheetName, items, schema) {
   }
 }
 
-// Update a row by ID
+// Update a row by ID (with upsert fallback)
 function updateRowById(sheetName, idColName, idValue, updates, schema) {
   const sheet = getOrCreateSheet(sheetName);
   const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return;
+  if (data.length <= 1) {
+    if (schema) {
+      sheet.appendRow(objectToRow({ [idColName]: idValue, ...updates }, schema));
+    }
+    return;
+  }
 
   const headers = data[0];
   const idColIdx = headers.indexOf(idColName);
   if (idColIdx === -1) return;
 
+  let found = false;
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][idColIdx]) === String(idValue)) {
       headers.forEach((header, colIdx) => {
@@ -262,8 +268,14 @@ function updateRowById(sheetName, idColName, idValue, updates, schema) {
           sheet.getRange(i + 1, colIdx + 1).setValue(updates[header]);
         }
       });
+      found = true;
       break;
     }
+  }
+
+  // If not found in sheet, append row so no data is dropped
+  if (!found && schema) {
+    sheet.appendRow(objectToRow({ [idColName]: idValue, ...updates }, schema));
   }
 }
 
