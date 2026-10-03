@@ -189,6 +189,24 @@ function doPost(e) {
       return jsonResponse({ status: 'success', id: payload.appointment_id });
     }
 
+    // Update visit
+    if (action === 'updateVisit' && payload.visit_id && payload.updates) {
+      updateRowById(SHEET_NAMES.VISITS, 'visit_id', payload.visit_id, payload.updates, SCHEMAS.Visits);
+      return jsonResponse({ status: 'success', id: payload.visit_id });
+    }
+
+    // Delete visit
+    if (action === 'deleteVisit' && payload.visit_id) {
+      deleteRowById(SHEET_NAMES.VISITS, 'visit_id', payload.visit_id);
+      return jsonResponse({ status: 'success', id: payload.visit_id });
+    }
+
+    // Update patient
+    if (action === 'updatePatient' && payload.patient_id && payload.updates) {
+      updateRowById(SHEET_NAMES.PATIENTS, 'patient_id', payload.patient_id, payload.updates, SCHEMAS.Patients);
+      return jsonResponse({ status: 'success', id: payload.patient_id });
+    }
+
     // Append single payment
     if (action === 'createPayment' && payload.payment) {
       const sheet = getOrCreateSheet(SHEET_NAMES.PAYMENTS);
@@ -232,6 +250,24 @@ function updateRowById(sheetName, idColName, idValue, updates, schema) {
           sheet.getRange(i + 1, colIdx + 1).setValue(updates[header]);
         }
       });
+      break;
+    }
+  }
+}
+
+// Delete a row by ID
+function deleteRowById(sheetName, idColName, idValue) {
+  const sheet = getOrCreateSheet(sheetName);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+
+  const headers = data[0];
+  const idColIdx = headers.indexOf(idColName);
+  if (idColIdx === -1) return;
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idColIdx]) === String(idValue)) {
+      sheet.deleteRow(i + 1);
       break;
     }
   }

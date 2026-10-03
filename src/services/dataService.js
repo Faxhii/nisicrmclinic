@@ -100,7 +100,9 @@ export const PatientsService = {
   },
 
   update(patientId, updates) {
-    return update('patients', patientId, updates, 'patient_id');
+    const result = update('patients', patientId, updates, 'patient_id');
+    GoogleSheetsService.syncSingle('updatePatient', { patient_id: patientId, updates });
+    return result;
   },
 
   archive(patientId) {
@@ -205,11 +207,19 @@ export const VisitsService = {
   update(visitId, updates) {
     if (updates.total_amount !== undefined || updates.amount_paid !== undefined) {
       const visit = this.getById(visitId);
-      const total = Number(updates.total_amount ?? visit.total_amount) || 0;
-      const paid = Number(updates.amount_paid ?? visit.amount_paid) || 0;
-      updates.balance = total - paid;
+      const total = Number(updates.total_amount ?? visit?.total_amount) || 0;
+      const paid = Number(updates.amount_paid ?? visit?.amount_paid) || 0;
+      updates.balance = Math.max(0, total - paid);
     }
-    return update('visits', visitId, updates, 'visit_id');
+    const result = update('visits', visitId, updates, 'visit_id');
+    GoogleSheetsService.syncSingle('updateVisit', { visit_id: visitId, updates });
+    return result;
+  },
+
+  delete(visitId) {
+    const result = remove('visits', visitId, 'visit_id');
+    GoogleSheetsService.syncSingle('deleteVisit', { visit_id: visitId });
+    return result;
   },
 
   getTodaysVisits() {
