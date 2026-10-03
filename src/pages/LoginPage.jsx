@@ -118,20 +118,6 @@ export default function LoginPage() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
-
-          <div style={{
-            textAlign: 'center',
-            marginTop: 'var(--space-6)',
-            paddingTop: 'var(--space-5)',
-            borderTop: '1px solid var(--color-border-light)'
-          }}>
-            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
-              Demo — Doctor: doctor / nisi2026
-            </p>
-            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
-              Reception: reception / front2026
-            </p>
-          </div>
         </div>
       </div>
     </div>
