@@ -1,5 +1,5 @@
 // ============================================================
-// Supabase Sync Service — Replaces Google Sheets
+// Supabase Sync Service — Cloud PostgreSQL Backend
 // Handles bidirectional sync and realtime updates with Supabase
 // ============================================================
 

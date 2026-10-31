@@ -5,7 +5,8 @@ import { useToast } from '../contexts/ToastContext';
 import {
   Phone, MapPin, AlertTriangle, Calendar, FileText,
   CreditCard, ChevronRight, Plus, Clock, User,
-  Heart, Edit, Trash2, X, AlertCircle, Save, Check, Pill
+  Heart, Edit, Trash2, X, AlertCircle, Save, Check, Pill,
+  CheckCircle2, Zap, DollarSign
 } from 'lucide-react';
 import { PatientsService, VisitsService, PaymentsService, AppointmentsService, MedicinesService, reconcilePayments } from '../services/dataService';
 import { formatCurrency, formatDate, formatTime, getInitials } from '../utils/helpers';
@@ -50,6 +51,14 @@ export default function PatientProfilePage() {
   const [deletePaymentModal, setDeletePaymentModal] = useState(false);
   const [paymentToDelete, setPaymentToDelete] = useState(null);
 
+  // Quick Settle / "Collected the rest of the amount" Modal State
+  const [collectModalOpen, setCollectModalOpen] = useState(false);
+  const [collectAmount, setCollectAmount] = useState(0);
+  const [collectVisitId, setCollectVisitId] = useState(null);
+  const [collectMethod, setCollectMethod] = useState('Cash');
+  const [collectNotes, setCollectNotes] = useState('Collected the rest of the amount');
+  const [isCollecting, setIsCollecting] = useState(false);
+
   // Edit Patient State
   const [editPatientModal, setEditPatientModal] = useState(false);
   const [editPatientForm, setEditPatientForm] = useState({
@@ -84,6 +93,45 @@ export default function PatientProfilePage() {
     setPayments(PaymentsService.getByPatient(id));
     setAppointments(AppointmentsService.getByPatient(id));
     setLoading(false);
+  }
+
+  // -----------------------------------------------------------
+  // 1-Click "Collected the rest of the amount" Handlers
+  // -----------------------------------------------------------
+  function openCollectBalanceModal(amount, visitId = null) {
+    const num = Number(amount) || 0;
+    if (num <= 0) return;
+    setCollectAmount(num);
+    setCollectVisitId(visitId);
+    setCollectMethod('Cash');
+    setCollectNotes(visitId ? 'Collected the rest of the amount for visit' : 'Collected the rest of the amount');
+    setCollectModalOpen(true);
+  }
+
+  function handleConfirmCollectBalance() {
+    if (!patient || collectAmount <= 0) return;
+    setIsCollecting(true);
+    try {
+      PaymentsService.createWithCascade({
+        patient_id: patient.patient_id,
+        visit_id: collectVisitId || '',
+        amount: collectAmount,
+        payment_method: collectMethod,
+        payment_date: new Date().toISOString().split('T')[0],
+        notes: collectNotes || 'Collected the rest of the amount'
+      });
+      reconcilePayments();
+      toast.success(`Collected ${formatCurrency(collectAmount)} via ${collectMethod}! Remaining balance is now settled.`);
+      setCollectModalOpen(false);
+      try {
+        window.dispatchEvent(new Event('nisiclinic_data_synced'));
+      } catch {}
+      loadData();
+    } catch (err) {
+      toast.error('Failed to collect payment: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsCollecting(false);
+    }
   }
 
   // -----------------------------------------------------------
@@ -339,6 +387,27 @@ export default function PatientProfilePage() {
           </div>
 
           <div className="profile-actions">
+            {outstanding > 0 && (
+              <button
+                className="btn btn-sm"
+                style={{
+                  background: 'linear-gradient(135deg, #10B981, #059669)',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontWeight: 600,
+                  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.35)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer'
+                }}
+                onClick={() => openCollectBalanceModal(outstanding)}
+                id="header-collect-rest-btn"
+                title="Collect all remaining pending balance"
+              >
+                <CheckCircle2 size={15} /> Collected Rest ({formatCurrency(outstanding)})
+              </button>
+            )}
             <button className="btn btn-primary btn-sm" onClick={() => navigate(`/visits/new?patient=${id}`)}>
               <FileText size={14} /> New Visit
             </button>
@@ -379,14 +448,76 @@ export default function PatientProfilePage() {
             </div>
             <div className="profile-stat-label">Total Paid</div>
           </div>
-          <div className="profile-stat">
+          <div
+            className="profile-stat"
+            style={outstanding > 0 ? { cursor: 'pointer', background: 'rgba(245, 158, 11, 0.08)', borderRadius: 'var(--radius-md)' } : {}}
+            onClick={() => outstanding > 0 && openCollectBalanceModal(outstanding)}
+            title={outstanding > 0 ? "Click to collect remaining balance" : undefined}
+          >
             <div className="profile-stat-value" style={{ color: outstanding > 0 ? 'var(--color-warning)' : 'var(--color-success)' }}>
               {formatCurrency(outstanding)}
             </div>
-            <div className="profile-stat-label">Outstanding</div>
+            <div className="profile-stat-label">
+              Outstanding {outstanding > 0 && <span style={{ color: 'var(--color-success)', fontWeight: 600, fontSize: '11px', marginLeft: '4px' }}>⚡ Settle</span>}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Prominent Pending Balance Alert Banner */}
+      {outstanding > 0 && (
+        <div style={{
+          margin: 'var(--space-4) 0',
+          padding: 'var(--space-3) var(--space-4)',
+          borderRadius: 'var(--radius-lg)',
+          background: 'linear-gradient(135deg, #FFFBEB 0%, #ECFDF5 100%)',
+          border: '1px solid #FCD34D',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 'var(--space-3)',
+          boxShadow: 'var(--shadow-sm)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <div style={{
+              width: '38px', height: '38px', borderRadius: 'var(--radius-full)',
+              background: '#FEF3C7', color: '#D97706',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <AlertCircle size={20} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', fontSize: 'var(--font-size-base)' }}>
+                Pending Balance Due: <span style={{ color: 'var(--color-error)', fontWeight: 700 }}>{formatCurrency(outstanding)}</span>
+              </div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
+                Patient has an unpaid balance. Settle and record collection instantly with one click.
+              </div>
+            </div>
+          </div>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: 'linear-gradient(135deg, #10B981, #059669)',
+              color: '#ffffff',
+              border: 'none',
+              fontWeight: 600,
+              padding: '8px 16px',
+              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.35)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer'
+            }}
+            onClick={() => openCollectBalanceModal(outstanding)}
+            id="banner-collect-rest-btn"
+          >
+            <CheckCircle2 size={16} /> Collected the Rest of the Amount ({formatCurrency(outstanding)})
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="tabs">
@@ -658,16 +789,39 @@ export default function PatientProfilePage() {
                       <span className="timeline-content-value">
                         {formatCurrency(visit.total_amount)}
                         {visit.balance > 0 ? (
-                          <span style={{
-                            color: 'var(--color-warning-text)',
-                            background: 'var(--color-warning-light)',
-                            padding: '2px 8px',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: 'var(--font-size-xs)',
-                            fontWeight: 600,
-                            marginLeft: '8px'
-                          }}>
-                            {formatCurrency(visit.balance)} pending
+                          <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <span style={{
+                              color: 'var(--color-warning-text)',
+                              background: 'var(--color-warning-light)',
+                              padding: '2px 8px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: 'var(--font-size-xs)',
+                              fontWeight: 600,
+                              marginLeft: '8px'
+                            }}>
+                              {formatCurrency(visit.balance)} pending
+                            </span>
+                            <button
+                              className="btn btn-sm"
+                              style={{
+                                padding: '2px 10px',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                background: '#ECFDF5',
+                                color: '#059669',
+                                border: '1px solid #A7F3D0',
+                                borderRadius: 'var(--radius-sm)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => openCollectBalanceModal(visit.balance, visit.visit_id)}
+                              id={`collect-visit-balance-${visit.visit_id}`}
+                              title="Collected the rest of the amount for this visit"
+                            >
+                              <CheckCircle2 size={12} /> Collected Rest ({formatCurrency(visit.balance)})
+                            </button>
                           </span>
                         ) : (
                           <span style={{ color: 'var(--color-success)', fontSize: 'var(--font-size-xs)', marginLeft: '8px' }}>
@@ -717,7 +871,25 @@ export default function PatientProfilePage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
+            {outstanding > 0 && (
+              <button
+                className="btn btn-sm"
+                style={{
+                  background: 'linear-gradient(135deg, #10B981, #059669)',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                onClick={() => openCollectBalanceModal(outstanding)}
+                id="payments-tab-collect-rest-btn"
+              >
+                <CheckCircle2 size={14} /> Collected Rest ({formatCurrency(outstanding)})
+              </button>
+            )}
             <button className="btn btn-primary btn-sm" onClick={() => navigate(`/payments/new?patient=${id}`)}>
               <CreditCard size={14} /> Record Payment
             </button>
@@ -1469,6 +1641,117 @@ export default function PatientProfilePage() {
               id="confirm-delete-payment-btn"
             >
               Yes, Delete Payment
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 1-Click "Collected the rest of the amount" Modal */}
+      <Modal
+        isOpen={collectModalOpen}
+        onClose={() => !isCollecting && setCollectModalOpen(false)}
+        title="Collect Remaining Balance"
+      >
+        <div style={{ padding: 'var(--space-1) 0' }}>
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(59, 130, 246, 0.05) 100%)',
+            border: '1px solid #A7F3D0',
+            borderRadius: 'var(--radius-lg)',
+            padding: 'var(--space-4)',
+            textAlign: 'center',
+            marginBottom: 'var(--space-5)'
+          }}>
+            <div style={{ fontSize: 'var(--font-size-xs)', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+              Amount to Collect
+            </div>
+            <div style={{ fontSize: '32px', fontWeight: 800, color: 'var(--color-success)', margin: '4px 0' }}>
+              {formatCurrency(collectAmount)}
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+              Patient: <strong>{patient?.name}</strong> {patient?.phone ? `(${patient?.phone})` : ''}
+            </div>
+          </div>
+
+          {/* Payment Method Quick Selector */}
+          <div className="form-group" style={{ marginBottom: 'var(--space-4)' }}>
+            <label className="form-label" style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+              Payment Method
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+              {['Cash', 'UPI', 'Card', 'Bank Transfer'].map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setCollectMethod(m)}
+                  style={{
+                    padding: '8px 4px',
+                    borderRadius: 'var(--radius-md)',
+                    border: collectMethod === m ? '2px solid var(--color-success)' : '1px solid var(--color-border)',
+                    background: collectMethod === m ? 'var(--color-success-light)' : 'var(--color-surface)',
+                    color: collectMethod === m ? 'var(--color-success)' : 'var(--color-text-primary)',
+                    fontWeight: collectMethod === m ? 700 : 500,
+                    fontSize: 'var(--font-size-xs)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                    textAlign: 'center'
+                  }}
+                >
+                  {m === 'Cash' && '💵 '}
+                  {m === 'UPI' && '📱 '}
+                  {m === 'Card' && '💳 '}
+                  {m === 'Bank Transfer' && '🏦 '}
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div className="form-group" style={{ marginBottom: 'var(--space-5)' }}>
+            <label className="form-label" htmlFor="collect-notes-input">
+              Payment Note
+            </label>
+            <input
+              id="collect-notes-input"
+              type="text"
+              className="form-input"
+              value={collectNotes}
+              onChange={e => setCollectNotes(e.target.value)}
+              placeholder="e.g. Collected the rest of the amount"
+            />
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setCollectModalOpen(false)}
+              disabled={isCollecting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={{
+                background: 'linear-gradient(135deg, #10B981, #059669)',
+                color: '#ffffff',
+                border: 'none',
+                fontWeight: 600,
+                padding: '8px 20px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 8px rgba(16, 185, 129, 0.35)',
+                cursor: 'pointer'
+              }}
+              onClick={handleConfirmCollectBalance}
+              disabled={isCollecting}
+              id="confirm-collect-balance-btn"
+            >
+              <CheckCircle2 size={16} />
+              {isCollecting ? 'Recording...' : `Collected Full ${formatCurrency(collectAmount)} Now`}
             </button>
           </div>
         </div>

@@ -10,7 +10,7 @@ export default function MorePage() {
   const { user, logout } = useAuth();
 
   const items = [
-    { icon: Settings, label: 'Google Sheets & Settings', path: '/settings', color: 'var(--color-accent)' },
+    { icon: Settings, label: 'Settings', path: '/settings', color: 'var(--color-accent)' },
     { icon: Pill, label: 'Medicines & Inventory', path: '/medicines', color: '#059669' },
     { icon: CreditCard, label: 'Payments', path: '/payments', color: 'var(--color-success)' },
     { icon: Clock, label: 'Follow-ups', path: '/follow-ups', color: 'var(--color-info)' },

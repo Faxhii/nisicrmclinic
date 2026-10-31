@@ -1,7 +1,5 @@
 // ============================================================
-// Data Service Layer — Clean abstraction over storage backend
-// Currently uses localStorage; designed for easy swap to
-// Google Sheets API or Django REST backend
+// Data Service Layer — Supabase Cloud Backend & Local Cache
 // ============================================================
 
 import { SupabaseService } from './supabaseService';
@@ -433,10 +431,16 @@ export const PaymentsService = {
     let remaining = Number(paymentData.amount) || 0;
     if (remaining <= 0) return null;
 
-    // Get visits with balance > 0, sorted oldest first (FIFO)
-    const unpaidVisits = getAll('visits')
-      .filter(v => v.patient_id === patientId && (Number(v.balance) || 0) > 0)
-      .sort((a, b) => new Date(a.visit_date) - new Date(b.visit_date));
+    // Get visits with balance > 0
+    let unpaidVisits = getAll('visits')
+      .filter(v => v.patient_id === patientId && (Number(v.balance) || 0) > 0);
+
+    // If a specific visit_id was provided, prioritize it first
+    if (paymentData.visit_id) {
+      unpaidVisits.sort((a, b) => (a.visit_id === paymentData.visit_id ? -1 : (b.visit_id === paymentData.visit_id ? 1 : 0)));
+    } else {
+      unpaidVisits.sort((a, b) => new Date(a.visit_date) - new Date(b.visit_date));
+    }
 
     if (unpaidVisits.length > 0) {
       let firstPayment = null;

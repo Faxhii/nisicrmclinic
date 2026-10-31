@@ -13,7 +13,7 @@ const navItems = [
   { path: '/payments', icon: CreditCard, label: 'Payments', permission: 'view_payments' },
   { path: '/medicines', icon: Pill, label: 'Medicines', permission: 'view_medicines' },
   { path: '/follow-ups', icon: Clock, label: 'Follow-ups', permission: 'view_dashboard' },
-  { path: '/settings', icon: Settings, label: 'Google Sheets & Sync', permission: 'view_dashboard' },
+  { path: '/settings', icon: Settings, label: 'Settings', permission: 'view_dashboard' },
 ];
 
 export default function Sidebar({ isOpen, onClose }) {
