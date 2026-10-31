@@ -234,6 +234,25 @@ function doPost(e) {
       return jsonResponse({ status: 'success', id: payload.payment_id });
     }
 
+    // Append single medicine
+    if (action === 'createMedicine' && payload.medicine) {
+      const sheet = getOrCreateSheet(SHEET_NAMES.MEDICINES);
+      sheet.appendRow(objectToRow(payload.medicine, SCHEMAS.Medicines));
+      return jsonResponse({ status: 'success', item: payload.medicine });
+    }
+
+    // Update medicine
+    if (action === 'updateMedicine' && payload.medicine_id && payload.updates) {
+      updateRowById(SHEET_NAMES.MEDICINES, 'medicine_id', payload.medicine_id, payload.updates, SCHEMAS.Medicines);
+      return jsonResponse({ status: 'success', id: payload.medicine_id });
+    }
+
+    // Delete medicine
+    if (action === 'deleteMedicine' && payload.medicine_id) {
+      deleteRowById(SHEET_NAMES.MEDICINES, 'medicine_id', payload.medicine_id);
+      return jsonResponse({ status: 'success', id: payload.medicine_id });
+    }
+
     return jsonResponse({ status: 'error', message: 'Unknown action: ' + action });
   } catch (err) {
     return jsonResponse({ status: 'error', message: err.toString() });

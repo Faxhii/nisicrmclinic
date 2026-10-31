@@ -611,7 +611,7 @@ export default function PatientProfilePage() {
                             fontWeight: 600,
                             marginLeft: '8px'
                           }}>
-                            ₹{visit.balance} pending
+                            {formatCurrency(visit.balance)} pending
                           </span>
                         ) : (
                           <span style={{ color: 'var(--color-success)', fontSize: 'var(--font-size-xs)', marginLeft: '8px' }}>

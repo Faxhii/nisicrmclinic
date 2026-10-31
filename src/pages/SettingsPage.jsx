@@ -122,12 +122,28 @@ function doPost(e) {
       getOrCreateSheet(SHEET_NAMES.PATIENTS).appendRow(objectToRow(payload.patient, SCHEMAS.Patients));
       return jsonResponse({ status: 'success' });
     }
+    if (action === 'updatePatient' && payload.patient_id && payload.updates) {
+      updateRowById(SHEET_NAMES.PATIENTS, 'patient_id', payload.patient_id, payload.updates, SCHEMAS.Patients);
+      return jsonResponse({ status: 'success' });
+    }
     if (action === 'createVisit' && payload.visit) {
       getOrCreateSheet(SHEET_NAMES.VISITS).appendRow(objectToRow(payload.visit, SCHEMAS.Visits));
       return jsonResponse({ status: 'success' });
     }
+    if (action === 'updateVisit' && payload.visit_id && payload.updates) {
+      updateRowById(SHEET_NAMES.VISITS, 'visit_id', payload.visit_id, payload.updates, SCHEMAS.Visits);
+      return jsonResponse({ status: 'success' });
+    }
+    if (action === 'deleteVisit' && payload.visit_id) {
+      deleteRowById(SHEET_NAMES.VISITS, 'visit_id', payload.visit_id);
+      return jsonResponse({ status: 'success' });
+    }
     if (action === 'createAppointment' && payload.appointment) {
       getOrCreateSheet(SHEET_NAMES.APPOINTMENTS).appendRow(objectToRow(payload.appointment, SCHEMAS.Appointments));
+      return jsonResponse({ status: 'success' });
+    }
+    if (action === 'updateAppointment' && payload.appointment_id && payload.updates) {
+      updateRowById(SHEET_NAMES.APPOINTMENTS, 'appointment_id', payload.appointment_id, payload.updates, SCHEMAS.Appointments);
       return jsonResponse({ status: 'success' });
     }
     if (action === 'createPayment' && payload.payment) {
@@ -140,6 +156,18 @@ function doPost(e) {
     }
     if (action === 'deletePayment' && payload.payment_id) {
       deleteRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id);
+      return jsonResponse({ status: 'success' });
+    }
+    if (action === 'createMedicine' && payload.medicine) {
+      getOrCreateSheet(SHEET_NAMES.MEDICINES).appendRow(objectToRow(payload.medicine, SCHEMAS.Medicines));
+      return jsonResponse({ status: 'success' });
+    }
+    if (action === 'updateMedicine' && payload.medicine_id && payload.updates) {
+      updateRowById(SHEET_NAMES.MEDICINES, 'medicine_id', payload.medicine_id, payload.updates, SCHEMAS.Medicines);
+      return jsonResponse({ status: 'success' });
+    }
+    if (action === 'deleteMedicine' && payload.medicine_id) {
+      deleteRowById(SHEET_NAMES.MEDICINES, 'medicine_id', payload.medicine_id);
       return jsonResponse({ status: 'success' });
     }
     return jsonResponse({ status: 'error', message: 'Unknown action' });
@@ -156,6 +184,35 @@ function replaceSheet(sheetName, items, schema) {
   if (items && items.length > 0) {
     const rows = items.map(item => objectToRow(item, schema));
     sheet.getRange(2, 1, rows.length, schema.length).setValues(rows);
+  }
+}
+
+function updateRowById(sheetName, idColName, idValue, updates, schema) {
+  const sheet = getOrCreateSheet(sheetName);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) { if (schema) sheet.appendRow(objectToRow({ [idColName]: idValue, ...updates }, schema)); return; }
+  const headers = data[0];
+  const idColIdx = headers.indexOf(idColName);
+  if (idColIdx === -1) return;
+  let found = false;
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idColIdx]) === String(idValue)) {
+      headers.forEach((h, c) => { if (updates[h] !== undefined) sheet.getRange(i+1, c+1).setValue(updates[h]); });
+      found = true; break;
+    }
+  }
+  if (!found && schema) sheet.appendRow(objectToRow({ [idColName]: idValue, ...updates }, schema));
+}
+
+function deleteRowById(sheetName, idColName, idValue) {
+  const sheet = getOrCreateSheet(sheetName);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+  const headers = data[0];
+  const idColIdx = headers.indexOf(idColName);
+  if (idColIdx === -1) return;
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idColIdx]) === String(idValue)) { sheet.deleteRow(i+1); break; }
   }
 }
 
