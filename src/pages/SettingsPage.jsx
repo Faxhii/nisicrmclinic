@@ -64,13 +64,15 @@ CREATE TABLE IF NOT EXISTS visits (
 CREATE TABLE IF NOT EXISTS payments (
   payment_id TEXT PRIMARY KEY,
   patient_id TEXT NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
-  visit_id TEXT REFERENCES visits(visit_id) ON DELETE SET NULL,
+  visit_id TEXT,
   amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
   payment_method TEXT DEFAULT 'Cash',
   payment_date DATE NOT NULL,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_visit_id_fkey;
 
 CREATE TABLE IF NOT EXISTS appointments (
   appointment_id TEXT PRIMARY KEY,
