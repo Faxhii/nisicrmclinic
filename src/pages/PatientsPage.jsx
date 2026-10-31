@@ -1,14 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserPlus, ChevronRight, Users } from 'lucide-react';
+import { Search, UserPlus, ChevronRight, Users, Trash2 } from 'lucide-react';
 import { PatientsService, VisitsService, AppointmentsService } from '../services/dataService';
 import { formatCurrency, formatDate, getInitials, debounce } from '../utils/helpers';
+import Modal from '../components/Modal';
+import { useToast } from '../contexts/ToastContext';
 
 export default function PatientsPage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [patients, setPatients] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  const [patientToDelete, setPatientToDelete] = useState(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     loadPatients();
@@ -16,6 +21,21 @@ export default function PatientsPage() {
 
   function loadPatients() {
     setPatients(PatientsService.getAll().filter(p => !p.is_archived));
+  }
+
+  function promptDeletePatient(patient) {
+    setPatientToDelete(patient);
+    setDeleteModalOpen(true);
+  }
+
+  function handleConfirmDelete() {
+    if (!patientToDelete) return;
+    const name = patientToDelete.name;
+    PatientsService.delete(patientToDelete.patient_id);
+    toast.success(`Patient "${name}" and all associated records deleted.`);
+    setDeleteModalOpen(false);
+    setPatientToDelete(null);
+    loadPatients();
   }
 
   const enrichedPatients = useMemo(() => {
@@ -181,8 +201,24 @@ export default function PatientsPage() {
                         <span className="badge badge-success">Paid</span>
                       )}
                     </td>
-                    <td>
-                      <ChevronRight size={16} color="var(--color-text-tertiary)" />
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon btn-sm"
+                          title="Delete Patient"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            promptDeletePatient(p);
+                          }}
+                          style={{ color: 'var(--color-text-tertiary)' }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--color-error)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-tertiary)'}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        <ChevronRight size={16} color="var(--color-text-tertiary)" />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -191,6 +227,62 @@ export default function PatientsPage() {
           </div>
         </div>
       )}
+
+      {/* Delete Patient Confirmation Modal */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Delete Patient Record?"
+      >
+        <div style={{ textAlign: 'center', padding: 'var(--space-2) 0' }}>
+          <div style={{
+            width: '48px', height: '48px', borderRadius: 'var(--radius-full)',
+            background: 'var(--color-error-light)', color: 'var(--color-error)',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            marginBottom: 'var(--space-4)'
+          }}>
+            <Trash2 size={24} />
+          </div>
+
+          <p style={{ fontWeight: 700, fontSize: 'var(--font-size-base)', marginBottom: 'var(--space-2)' }}>
+            Permanently delete {patientToDelete?.name}?
+          </p>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+            Are you sure you want to delete <strong>{patientToDelete?.name}</strong> ({patientToDelete?.patient_id})?
+          </p>
+
+          <div style={{
+            padding: '8px 12px',
+            background: '#FEF2F2',
+            border: '1px solid #FCA5A5',
+            borderRadius: 'var(--radius-md)',
+            color: '#B91C1C',
+            fontSize: 'var(--font-size-xs)',
+            marginBottom: 'var(--space-5)',
+            textAlign: 'left'
+          }}>
+            ⚠️ <strong>Warning:</strong> This will also permanently remove all associated clinical visits, treatment records, prescriptions, and payments for this patient. This action cannot be undone.
+          </div>
+
+          <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDeleteModalOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={handleConfirmDelete}
+              id="confirm-delete-patient-list-btn"
+            >
+              Yes, Delete Patient & All Records
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

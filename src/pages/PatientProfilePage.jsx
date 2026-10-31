@@ -43,6 +43,13 @@ export default function PatientProfilePage() {
   const [deleteVisitModal, setDeleteVisitModal] = useState(false);
   const [visitToDelete, setVisitToDelete] = useState(null);
 
+  // Delete Patient State
+  const [deletePatientModal, setDeletePatientModal] = useState(false);
+
+  // Delete Payment State
+  const [deletePaymentModal, setDeletePaymentModal] = useState(false);
+  const [paymentToDelete, setPaymentToDelete] = useState(null);
+
   // Edit Patient State
   const [editPatientModal, setEditPatientModal] = useState(false);
   const [editPatientForm, setEditPatientForm] = useState({
@@ -194,6 +201,35 @@ export default function PatientProfilePage() {
   }
 
   // -----------------------------------------------------------
+  // Patient Delete Handler
+  // -----------------------------------------------------------
+  function handleConfirmDeletePatient() {
+    if (!patient) return;
+    const pName = patient.name;
+    PatientsService.delete(patient.patient_id);
+    toast.success(`Patient "${pName}" and all associated records deleted.`);
+    setDeletePatientModal(false);
+    navigate('/patients');
+  }
+
+  // -----------------------------------------------------------
+  // Payment Delete Handlers
+  // -----------------------------------------------------------
+  function promptDeletePayment(payment) {
+    setPaymentToDelete(payment);
+    setDeletePaymentModal(true);
+  }
+
+  function handleConfirmDeletePayment() {
+    if (!paymentToDelete) return;
+    PaymentsService.delete(paymentToDelete.payment_id);
+    toast.success('Payment record deleted and balance recalculated.');
+    setDeletePaymentModal(false);
+    setPaymentToDelete(null);
+    loadData();
+  }
+
+  // -----------------------------------------------------------
   // Patient Edit Handlers
   // -----------------------------------------------------------
   function openEditPatient() {
@@ -277,6 +313,17 @@ export default function PatientProfilePage() {
                 >
                   <Edit size={16} />
                 </button>
+                <button
+                  className="btn btn-ghost btn-icon btn-sm"
+                  onClick={() => setDeletePatientModal(true)}
+                  title="Delete Patient"
+                  id="delete-patient-icon-btn"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                  onMouseEnter={e => e.currentTarget.style.color = 'var(--color-error)'}
+                  onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-tertiary)'}
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
               <div className="profile-meta">
                 <span>{patient.patient_id}</span>
@@ -303,6 +350,15 @@ export default function PatientProfilePage() {
             </button>
             <button className="btn btn-secondary btn-sm" onClick={openEditPatient}>
               <Edit size={14} /> Edit Patient
+            </button>
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ color: 'var(--color-error)', borderColor: '#FCA5A5' }}
+              onClick={() => setDeletePatientModal(true)}
+              id="delete-patient-profile-btn"
+              title="Delete this patient"
+            >
+              <Trash2 size={14} /> Delete
             </button>
           </div>
         </div>
@@ -685,6 +741,7 @@ export default function PatientProfilePage() {
                       <th>Amount</th>
                       <th>Method</th>
                       <th>Notes</th>
+                      <th style={{ textAlign: 'right' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -698,6 +755,18 @@ export default function PatientProfilePage() {
                           <span className="badge badge-confirmed">{p.payment_method}</span>
                         </td>
                         <td style={{ color: 'var(--color-text-secondary)' }}>{p.notes || '—'}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            className="btn btn-ghost btn-icon btn-sm"
+                            onClick={() => promptDeletePayment(p)}
+                            title="Delete payment"
+                            style={{ color: 'var(--color-text-tertiary)' }}
+                            onMouseEnter={e => e.currentTarget.style.color = 'var(--color-error)'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-tertiary)'}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1197,21 +1266,34 @@ export default function PatientProfilePage() {
             />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <button
               type="button"
-              className="btn btn-secondary"
-              onClick={() => setEditPatientModal(false)}
+              className="btn btn-ghost btn-sm"
+              style={{ color: 'var(--color-error)' }}
+              onClick={() => {
+                setEditPatientModal(false);
+                setDeletePatientModal(true);
+              }}
             >
-              Cancel
+              <Trash2 size={14} /> Delete Patient
             </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              id="save-patient-edit-btn"
-            >
-              <Save size={15} /> Save Patient Changes
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setEditPatientModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                id="save-patient-edit-btn"
+              >
+                <Save size={15} /> Save Patient Changes
+              </button>
+            </div>
           </div>
         </form>
       </Modal>
@@ -1254,6 +1336,139 @@ export default function PatientProfilePage() {
               id="confirm-delete-visit-btn"
             >
               Yes, Delete Visit
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* =========================================================
+          MODAL 4: CONFIRM DELETE PATIENT
+          ========================================================= */}
+      <Modal
+        isOpen={deletePatientModal}
+        onClose={() => setDeletePatientModal(false)}
+        title="Delete Patient Dossier?"
+      >
+        <div style={{ textAlign: 'center', padding: 'var(--space-2) 0' }}>
+          <div style={{
+            width: '52px', height: '52px', borderRadius: 'var(--radius-full)',
+            background: 'var(--color-error-light)', color: 'var(--color-error)',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            marginBottom: 'var(--space-4)'
+          }}>
+            <Trash2 size={26} />
+          </div>
+
+          <p style={{ fontWeight: 700, fontSize: 'var(--font-size-base)', marginBottom: 'var(--space-2)' }}>
+            Permanently delete {patient?.name}?
+          </p>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+            This will permanently remove <strong>{patient?.name}</strong> ({patient?.patient_id}) along with all associated history:
+          </p>
+
+          <div style={{
+            background: 'var(--color-bg)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-3)',
+            marginBottom: 'var(--space-5)',
+            textAlign: 'left',
+            fontSize: 'var(--font-size-xs)',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 'var(--space-2)'
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-primary)' }}>{visits.length}</div>
+              <div style={{ color: 'var(--color-text-tertiary)' }}>Visits</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-primary)' }}>{payments.length}</div>
+              <div style={{ color: 'var(--color-text-tertiary)' }}>Payments</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-primary)' }}>{appointments.length}</div>
+              <div style={{ color: 'var(--color-text-tertiary)' }}>Appointments</div>
+            </div>
+          </div>
+
+          <div style={{
+            padding: '8px 12px',
+            background: '#FEF2F2',
+            border: '1px solid #FCA5A5',
+            borderRadius: 'var(--radius-md)',
+            color: '#B91C1C',
+            fontSize: 'var(--font-size-xs)',
+            marginBottom: 'var(--space-5)',
+            textAlign: 'left'
+          }}>
+            ⚠️ <strong>Warning:</strong> This action cannot be undone. All clinical notes, treatment records, prescriptions, and financial transactions will be deleted.
+          </div>
+
+          <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDeletePatientModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={handleConfirmDeletePatient}
+              id="confirm-delete-patient-btn"
+            >
+              Yes, Delete Patient & All Records
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* =========================================================
+          MODAL 5: CONFIRM DELETE PAYMENT
+          ========================================================= */}
+      <Modal
+        isOpen={deletePaymentModal}
+        onClose={() => setDeletePaymentModal(false)}
+        title="Delete Payment Record?"
+      >
+        <div style={{ textAlign: 'center', padding: 'var(--space-2) 0' }}>
+          <div style={{
+            width: '48px', height: '48px', borderRadius: 'var(--radius-full)',
+            background: 'var(--color-error-light)', color: 'var(--color-error)',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            marginBottom: 'var(--space-4)'
+          }}>
+            <Trash2 size={24} />
+          </div>
+
+          <p style={{ fontWeight: 600, fontSize: 'var(--font-size-base)', marginBottom: 'var(--space-2)' }}>
+            Delete this payment entry?
+          </p>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+            Payment of <strong>{formatCurrency(paymentToDelete?.amount)}</strong> collected on {formatDate(paymentToDelete?.payment_date)} ({paymentToDelete?.payment_method || 'Cash'}).
+          </p>
+
+          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning-text)', background: 'var(--color-warning-light)', padding: '6px 10px', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-5)' }}>
+            ℹ️ If this payment was linked to a visit, the outstanding balance on that visit will be adjusted automatically.
+          </p>
+
+          <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDeletePaymentModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={handleConfirmDeletePayment}
+              id="confirm-delete-payment-btn"
+            >
+              Yes, Delete Payment
             </button>
           </div>
         </div>

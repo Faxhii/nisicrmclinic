@@ -3,13 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import {
   CreditCard, Plus, DollarSign, TrendingUp, AlertCircle,
   Calendar, CheckCircle2, Clock, ArrowUpRight, Search,
-  PieChart, BarChart3, ChevronRight, Filter
+  PieChart, BarChart3, ChevronRight, Filter, Trash2
 } from 'lucide-react';
 import { PaymentsService, PatientsService, VisitsService, MedicinesService, reconcilePayments } from '../services/dataService';
 import { formatCurrency, formatDate, formatDateShort, getInitials } from '../utils/helpers';
+import Modal from '../components/Modal';
+import { useToast } from '../contexts/ToastContext';
 
 export default function PaymentsPage() {
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [payments, setPayments] = useState([]);
   const [visits, setVisits] = useState([]);
@@ -21,6 +24,10 @@ export default function PaymentsPage() {
   const [receivedFilter, setReceivedFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [hoveredBar, setHoveredBar] = useState(null);
+
+  // Delete payment confirmation state
+  const [deletePaymentModal, setDeletePaymentModal] = useState(false);
+  const [paymentToDelete, setPaymentToDelete] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -38,6 +45,20 @@ export default function PaymentsPage() {
     setPayments(PaymentsService.getAll());
     setVisits(VisitsService.getAll());
     setPatients(PatientsService.getAll());
+  }
+
+  function promptDeletePayment(payment) {
+    setPaymentToDelete(payment);
+    setDeletePaymentModal(true);
+  }
+
+  function handleConfirmDeletePayment() {
+    if (!paymentToDelete) return;
+    PaymentsService.delete(paymentToDelete.payment_id);
+    toast.success('Payment record deleted and visit balance updated.');
+    setDeletePaymentModal(false);
+    setPaymentToDelete(null);
+    loadData();
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -744,16 +765,31 @@ export default function PaymentsPage() {
                           {p.notes || '—'}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              patient && navigate(`/patients/${patient.patient_id}`);
-                            }}
-                            title="View patient dossier"
-                          >
-                            View Patient <ChevronRight size={14} />
-                          </button>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', justifyContent: 'flex-end' }}>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                patient && navigate(`/patients/${patient.patient_id}`);
+                              }}
+                              title="View patient dossier"
+                            >
+                              View Patient <ChevronRight size={14} />
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-icon btn-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                promptDeletePayment(p);
+                              }}
+                              title="Delete payment"
+                              style={{ color: 'var(--color-text-tertiary)' }}
+                              onMouseEnter={e => e.currentTarget.style.color = 'var(--color-error)'}
+                              onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-tertiary)'}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -871,6 +907,53 @@ export default function PaymentsPage() {
           </div>
         )
       )}
+
+      {/* Delete Payment Confirmation Modal */}
+      <Modal
+        isOpen={deletePaymentModal}
+        onClose={() => setDeletePaymentModal(false)}
+        title="Delete Payment Record?"
+      >
+        <div style={{ textAlign: 'center', padding: 'var(--space-2) 0' }}>
+          <div style={{
+            width: '48px', height: '48px', borderRadius: 'var(--radius-full)',
+            background: 'var(--color-error-light)', color: 'var(--color-error)',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            marginBottom: 'var(--space-4)'
+          }}>
+            <Trash2 size={24} />
+          </div>
+
+          <p style={{ fontWeight: 600, fontSize: 'var(--font-size-base)', marginBottom: 'var(--space-2)' }}>
+            Delete this payment transaction?
+          </p>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+            Amount: <strong>{formatCurrency(paymentToDelete?.amount)}</strong> collected on {formatDate(paymentToDelete?.payment_date)} ({paymentToDelete?.payment_method || 'Cash'}).
+          </p>
+
+          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning-text)', background: 'var(--color-warning-light)', padding: '6px 10px', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-5)' }}>
+            ℹ️ If this payment was tied to a visit, the outstanding balance on that visit will be restored automatically.
+          </p>
+
+          <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDeletePaymentModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={handleConfirmDeletePayment}
+              id="confirm-delete-payment-ledger-btn"
+            >
+              Yes, Delete Payment
+            </button>
+          </div>
+        </div>
+      </Modal>
 
     </div>
   );

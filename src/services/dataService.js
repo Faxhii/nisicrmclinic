@@ -109,6 +109,35 @@ export const PatientsService = {
     return update('patients', patientId, { is_archived: true }, 'patient_id');
   },
 
+  delete(patientId) {
+    // 1. Remove patient record
+    const result = remove('patients', patientId, 'patient_id');
+
+    // 2. Cascade cleanup associated records in localStorage
+    // Visits
+    const visits = getAll('visits').filter(v => v.patient_id === patientId);
+    visits.forEach(v => {
+      remove('visits', v.visit_id, 'visit_id');
+    });
+
+    // Payments
+    const payments = getAll('payments').filter(p => p.patient_id === patientId);
+    payments.forEach(p => {
+      remove('payments', p.payment_id, 'payment_id');
+    });
+
+    // Appointments
+    const appts = getAll('appointments').filter(a => a.patient_id === patientId);
+    appts.forEach(a => {
+      remove('appointments', a.appointment_id, 'appointment_id');
+    });
+
+    // Sync with Google Sheets
+    GoogleSheetsService.syncSingle('deletePatient', { patient_id: patientId });
+
+    return result;
+  },
+
   search(query) {
     const patients = this.getAll();
     const q = query.toLowerCase().trim();
@@ -323,6 +352,12 @@ export const AppointmentsService = {
     return this.update(appointmentId, { status: 'Completed' });
   },
 
+  delete(appointmentId) {
+    const result = remove('appointments', appointmentId, 'appointment_id');
+    GoogleSheetsService.syncSingle('deleteAppointment', { appointment_id: appointmentId });
+    return result;
+  },
+
   getTodaysAppointments() {
     const today = new Date().toISOString().split('T')[0];
     return this.getAll().filter(a => a.date === today && a.status !== 'Cancelled');
@@ -440,6 +475,32 @@ export const PaymentsService = {
   /** Correct total billed — sum of visit total_amount, not payments + pending */
   getTotalBilled() {
     return getAll('visits').reduce((sum, v) => sum + (Number(v.total_amount) || 0), 0);
+  },
+
+  delete(paymentId) {
+    const payment = getById('payments', paymentId, 'payment_id');
+    if (!payment) return false;
+
+    // If payment was linked to a specific visit, restore the visit's balance
+    if (payment.visit_id) {
+      const visit = getById('visits', payment.visit_id, 'visit_id');
+      if (visit) {
+        const newPaid = Math.max(0, (Number(visit.amount_paid) || 0) - (Number(payment.amount) || 0));
+        const newBalance = Math.max(0, (Number(visit.total_amount) || 0) - newPaid);
+        update('visits', visit.visit_id, {
+          amount_paid: newPaid,
+          balance: newBalance
+        }, 'visit_id');
+        GoogleSheetsService.syncSingle('updateVisit', {
+          visit_id: visit.visit_id,
+          updates: { amount_paid: newPaid, balance: newBalance }
+        });
+      }
+    }
+
+    const result = remove('payments', paymentId, 'payment_id');
+    GoogleSheetsService.syncSingle('deletePayment', { payment_id: paymentId });
+    return result;
   }
 };
 

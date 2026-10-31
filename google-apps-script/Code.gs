@@ -215,6 +215,21 @@ function doPost(e) {
       return jsonResponse({ status: 'success', id: payload.patient_id });
     }
 
+    // Delete patient (cascading visits, payments, appointments)
+    if (action === 'deletePatient' && payload.patient_id) {
+      deleteRowById(SHEET_NAMES.PATIENTS, 'patient_id', payload.patient_id);
+      deleteRowsByFilter(SHEET_NAMES.VISITS, 'patient_id', payload.patient_id);
+      deleteRowsByFilter(SHEET_NAMES.PAYMENTS, 'patient_id', payload.patient_id);
+      deleteRowsByFilter(SHEET_NAMES.APPOINTMENTS, 'patient_id', payload.patient_id);
+      return jsonResponse({ status: 'success', id: payload.patient_id });
+    }
+
+    // Delete appointment
+    if (action === 'deleteAppointment' && payload.appointment_id) {
+      deleteRowById(SHEET_NAMES.APPOINTMENTS, 'appointment_id', payload.appointment_id);
+      return jsonResponse({ status: 'success', id: payload.appointment_id });
+    }
+
     // Append single payment
     if (action === 'createPayment' && payload.payment) {
       const sheet = getOrCreateSheet(SHEET_NAMES.PAYMENTS);
@@ -320,6 +335,23 @@ function deleteRowById(sheetName, idColName, idValue) {
     if (String(data[i][idColIdx]) === String(idValue)) {
       sheet.deleteRow(i + 1);
       break;
+    }
+  }
+}
+
+// Delete multiple rows matching a column value (backwards iteration)
+function deleteRowsByFilter(sheetName, colName, colValue) {
+  const sheet = getOrCreateSheet(sheetName);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+
+  const headers = data[0];
+  const colIdx = headers.indexOf(colName);
+  if (colIdx === -1) return;
+
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][colIdx]) === String(colValue)) {
+      sheet.deleteRow(i + 1);
     }
   }
 }
