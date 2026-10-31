@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Menu, X, Cloud } from 'lucide-react';
 import { PatientsService } from '../services/dataService';
-import { GoogleSheetsService } from '../services/googleSheetsService';
+import { SupabaseService } from '../services/supabaseService';
 import { debounce } from '../utils/helpers';
 
 export default function Header({ onMenuToggle }) {
@@ -119,18 +119,18 @@ export default function Header({ onMenuToggle }) {
             fontSize: 'var(--font-size-xs)',
             padding: '5px 12px',
             borderRadius: 'var(--radius-full)',
-            background: GoogleSheetsService.isConfigured() ? 'var(--color-success-light)' : 'var(--color-surface-hover)',
-            color: GoogleSheetsService.isConfigured() ? 'var(--color-success-text)' : 'var(--color-text-secondary)',
-            border: `1px solid ${GoogleSheetsService.isConfigured() ? 'var(--color-success)' : 'var(--color-border)'}`,
+            background: SupabaseService.isConfigured() ? 'var(--color-success-light)' : 'var(--color-surface-hover)',
+            color: SupabaseService.isConfigured() ? 'var(--color-success-text)' : 'var(--color-text-secondary)',
+            border: `1px solid ${SupabaseService.isConfigured() ? 'var(--color-success)' : 'var(--color-border)'}`,
             cursor: 'pointer',
             transition: 'all 0.15s'
           }}
-          title={GoogleSheetsService.isConfigured() ? 'Google Sheets Live Database Connected' : 'Local Storage Mode — Click to connect Google Sheets'}
+          title={SupabaseService.isConfigured() ? 'Supabase Live Database Connected' : 'Local Storage Mode — Click to connect Supabase'}
           id="header-cloud-status-btn"
         >
-          <Cloud size={13} color={GoogleSheetsService.isConfigured() ? 'var(--color-success)' : 'var(--color-text-tertiary)'} />
+          <Cloud size={13} color={SupabaseService.isConfigured() ? 'var(--color-success)' : 'var(--color-text-tertiary)'} />
           <span style={{ fontWeight: 500 }}>
-            {GoogleSheetsService.isConfigured() ? 'Google Sheets Live' : 'Local Storage'}
+            {SupabaseService.isConfigured() ? 'Supabase Connected' : 'Local Storage'}
           </span>
         </button>
       </div>

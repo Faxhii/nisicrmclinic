@@ -4,7 +4,7 @@
 // Google Sheets API or Django REST backend
 // ============================================================
 
-import { GoogleSheetsService } from './googleSheetsService';
+import { SupabaseService } from './supabaseService';
 
 const STORAGE_PREFIX = 'nisiclinic_';
 
@@ -95,18 +95,20 @@ export const PatientsService = {
       is_archived: false
     };
     const created = create('patients', patient);
-    GoogleSheetsService.syncSingle('createPatient', { patient: created });
+    SupabaseService.sync('patient', 'create', created);
     return created;
   },
 
   update(patientId, updates) {
     const result = update('patients', patientId, updates, 'patient_id');
-    GoogleSheetsService.syncSingle('updatePatient', { patient_id: patientId, updates });
+    SupabaseService.sync('patient', 'update', { patient_id: patientId, ...updates });
     return result;
   },
 
   archive(patientId) {
-    return update('patients', patientId, { is_archived: true }, 'patient_id');
+    const res = update('patients', patientId, { is_archived: true }, 'patient_id');
+    SupabaseService.sync('patient', 'update', { patient_id: patientId, is_archived: true });
+    return res;
   },
 
   delete(patientId) {
@@ -132,8 +134,8 @@ export const PatientsService = {
       remove('appointments', a.appointment_id, 'appointment_id');
     });
 
-    // Sync with Google Sheets
-    GoogleSheetsService.syncSingle('deletePatient', { patient_id: patientId });
+    // Sync with Supabase (ON DELETE CASCADE in Postgres will also clean up linked rows)
+    SupabaseService.sync('patient', 'delete', { patient_id: patientId });
 
     return result;
   },
@@ -204,7 +206,7 @@ export const VisitsService = {
     };
 
     const result = create('visits', visit);
-    GoogleSheetsService.syncSingle('createVisit', { visit: result });
+    SupabaseService.sync('visit', 'create', result);
 
     // Create payment record if amount paid
     if (amountPaid > 0) {
@@ -268,23 +270,23 @@ export const VisitsService = {
           const newAmt = Math.max(0, (Number(pay.amount) || 0) - delta);
           if (newAmt === 0) {
             remove('payments', pay.payment_id, 'payment_id');
-            GoogleSheetsService.syncSingle('deletePayment', { payment_id: pay.payment_id });
+            SupabaseService.sync('payment', 'delete', { payment_id: pay.payment_id });
           } else {
             update('payments', pay.payment_id, { amount: newAmt }, 'payment_id');
-            GoogleSheetsService.syncSingle('updatePayment', { payment_id: pay.payment_id, updates: { amount: newAmt } });
+            SupabaseService.sync('payment', 'update', { payment_id: pay.payment_id, amount: newAmt });
           }
         }
       }
     }
 
     const result = update('visits', visitId, updates, 'visit_id');
-    GoogleSheetsService.syncSingle('updateVisit', { visit_id: visitId, updates });
+    SupabaseService.sync('visit', 'update', { visit_id: visitId, ...updates });
     return result;
   },
 
   delete(visitId) {
     const result = remove('visits', visitId, 'visit_id');
-    GoogleSheetsService.syncSingle('deleteVisit', { visit_id: visitId });
+    SupabaseService.sync('visit', 'delete', { visit_id: visitId });
     return result;
   },
 
@@ -334,13 +336,13 @@ export const AppointmentsService = {
       created_at: new Date().toISOString()
     };
     const result = create('appointments', appointment);
-    GoogleSheetsService.syncSingle('createAppointment', { appointment: result });
+    SupabaseService.sync('appointment', 'create', result);
     return result;
   },
 
   update(appointmentId, updates) {
     const result = update('appointments', appointmentId, updates, 'appointment_id');
-    GoogleSheetsService.syncSingle('updateAppointment', { appointment_id: appointmentId, updates });
+    SupabaseService.sync('appointment', 'update', { appointment_id: appointmentId, ...updates });
     return result;
   },
 
@@ -354,7 +356,7 @@ export const AppointmentsService = {
 
   delete(appointmentId) {
     const result = remove('appointments', appointmentId, 'appointment_id');
-    GoogleSheetsService.syncSingle('deleteAppointment', { appointment_id: appointmentId });
+    SupabaseService.sync('appointment', 'delete', { appointment_id: appointmentId });
     return result;
   },
 
@@ -417,13 +419,14 @@ export const PaymentsService = {
       created_at: new Date().toISOString()
     };
     const result = create('payments', payment);
-    GoogleSheetsService.syncSingle('createPayment', { payment: result });
+    SupabaseService.sync('payment', 'create', result);
     return result;
   },
 
   /**
-   * Record a standalone payment for a patient, cascading across their
-   * unpaid visits (oldest first) so the balance is properly cleared.
+   * Record a payment for a patient, allocating it across their
+   * unpaid visits (oldest first). Each portion is cleanly linked
+   * to its respective visit_id, completely preventing duplicate ghost payments.
    */
   createWithCascade(paymentData) {
     const patientId = paymentData.patient_id;
@@ -431,32 +434,71 @@ export const PaymentsService = {
     if (remaining <= 0) return null;
 
     // Get visits with balance > 0, sorted oldest first (FIFO)
-    const visits = getAll('visits')
+    const unpaidVisits = getAll('visits')
       .filter(v => v.patient_id === patientId && (Number(v.balance) || 0) > 0)
       .sort((a, b) => new Date(a.visit_date) - new Date(b.visit_date));
 
-    const payment = this.create(paymentData);
+    if (unpaidVisits.length > 0) {
+      let firstPayment = null;
 
-    for (const visit of visits) {
-      if (remaining <= 0) break;
-      const balance = Number(visit.balance) || 0;
-      const applyAmount = Math.min(remaining, balance);
-      const newPaid = (Number(visit.amount_paid) || 0) + applyAmount;
-      const newBalance = Math.max(0, (Number(visit.total_amount) || 0) - newPaid);
+      for (const visit of unpaidVisits) {
+        if (remaining <= 0) break;
+        const currentBalance = Number(visit.balance) || 0;
+        const applyAmount = Math.min(remaining, currentBalance);
 
-      update('visits', visit.visit_id, {
-        amount_paid: newPaid,
-        balance: newBalance
-      }, 'visit_id');
-      GoogleSheetsService.syncSingle('updateVisit', {
-        visit_id: visit.visit_id,
-        updates: { amount_paid: newPaid, balance: newBalance }
+        // Create payment explicitly tied to this visit
+        const p = this.create({
+          patient_id: patientId,
+          visit_id: visit.visit_id,
+          amount: applyAmount,
+          payment_method: paymentData.payment_method || 'Cash',
+          payment_date: paymentData.payment_date || new Date().toISOString().split('T')[0],
+          notes: paymentData.notes || `Payment towards visit (${visit.treatment || visit.complaint || 'Treatment'})`
+        });
+        if (!firstPayment) firstPayment = p;
+
+        const newPaid = (Number(visit.amount_paid) || 0) + applyAmount;
+        const newBalance = Math.max(0, (Number(visit.total_amount) || 0) - newPaid);
+
+        update('visits', visit.visit_id, {
+          amount_paid: newPaid,
+          balance: newBalance
+        }, 'visit_id');
+
+        SupabaseService.sync('visit', 'update', {
+          visit_id: visit.visit_id,
+          amount_paid: newPaid,
+          balance: newBalance
+        });
+
+        remaining -= applyAmount;
+      }
+
+      // If patient paid more than total outstanding, record remainder as advance credit
+      if (remaining > 0) {
+        const extraP = this.create({
+          patient_id: patientId,
+          visit_id: '',
+          amount: remaining,
+          payment_method: paymentData.payment_method || 'Cash',
+          payment_date: paymentData.payment_date || new Date().toISOString().split('T')[0],
+          notes: paymentData.notes ? `${paymentData.notes} (Advance Balance)` : 'Advance Patient Credit'
+        });
+        if (!firstPayment) firstPayment = extraP;
+      }
+
+      return firstPayment;
+    } else {
+      // No unpaid visits: record as standalone general payment
+      return this.create({
+        patient_id: patientId,
+        visit_id: '',
+        amount: remaining,
+        payment_method: paymentData.payment_method || 'Cash',
+        payment_date: paymentData.payment_date || new Date().toISOString().split('T')[0],
+        notes: paymentData.notes || 'General Payment'
       });
-
-      remaining -= applyAmount;
     }
-
-    return payment;
   },
 
   getTodaysPayments() {
@@ -491,15 +533,16 @@ export const PaymentsService = {
           amount_paid: newPaid,
           balance: newBalance
         }, 'visit_id');
-        GoogleSheetsService.syncSingle('updateVisit', {
+        SupabaseService.sync('visit', 'update', {
           visit_id: visit.visit_id,
-          updates: { amount_paid: newPaid, balance: newBalance }
+          amount_paid: newPaid,
+          balance: newBalance
         });
       }
     }
 
     const result = remove('payments', paymentId, 'payment_id');
-    GoogleSheetsService.syncSingle('deletePayment', { payment_id: paymentId });
+    SupabaseService.sync('payment', 'delete', { payment_id: paymentId });
     return result;
   }
 };
@@ -569,20 +612,20 @@ export const MedicinesService = {
       updated_at: new Date().toISOString()
     };
     const result = create('medicines', medicine);
-    GoogleSheetsService.syncSingle('createMedicine', { medicine: result });
+    SupabaseService.sync('medicine', 'create', result);
     return result;
   },
 
   update(medicineId, updates) {
     updates.updated_at = new Date().toISOString();
     const result = update('medicines', medicineId, updates, 'medicine_id');
-    GoogleSheetsService.syncSingle('updateMedicine', { medicine_id: medicineId, updates });
+    SupabaseService.sync('medicine', 'update', { medicine_id: medicineId, ...updates });
     return result;
   },
 
   delete(medicineId) {
     const result = remove('medicines', medicineId, 'medicine_id');
-    GoogleSheetsService.syncSingle('deleteMedicine', { medicine_id: medicineId });
+    SupabaseService.sync('medicine', 'delete', { medicine_id: medicineId });
     return result;
   },
 
@@ -787,31 +830,52 @@ export const AuthService = {
 
 export function reconcilePayments() {
   const visits = getAll('visits');
-  const payments = getAll('payments');
+  let payments = getAll('payments');
   let changed = false;
 
-  visits.forEach(visit => {
-    const visitPaid = Number(visit.amount_paid) || 0;
-    if (visitPaid > 0) {
-      const visitPayments = payments.filter(p => p.visit_id === visit.visit_id);
-      const totalRecorded = visitPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  // 1. Link any payments that have empty visit_id to their matching visit
+  payments = payments.map(p => {
+    if (!p.visit_id && p.patient_id) {
+      const patientVisits = visits.filter(v => v.patient_id === p.patient_id);
+      if (patientVisits.length === 1) {
+        changed = true;
+        return { ...p, visit_id: patientVisits[0].visit_id };
+      }
+    }
+    return p;
+  });
 
-      if (totalRecorded < visitPaid) {
-        const missingAmount = visitPaid - totalRecorded;
-        const newPayment = {
-          payment_id: generateId('PAY'),
-          patient_id: visit.patient_id,
-          visit_id: visit.visit_id,
-          amount: missingAmount,
-          payment_method: visit.payment_method || 'Cash',
-          payment_date: visit.visit_date || new Date().toISOString().split('T')[0],
-          notes: `Payment for visit - ${visit.treatment || visit.complaint || 'Consultation'}`,
-          created_at: visit.created_at || new Date().toISOString()
-        };
-        payments.push(newPayment);
-        GoogleSheetsService.syncSingle('createPayment', { payment: newPayment });
+  // 2. Remove duplicate auto-generated phantom payments that caused over-counting
+  visits.forEach(visit => {
+    const visitPayments = payments.filter(p => p.visit_id === visit.visit_id);
+    const totalPayments = visitPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const visitTotal = Number(visit.total_amount) || 0;
+
+    // If payments for this visit exceed total treatment because of an auto-reconciliation duplicate
+    if (totalPayments > visitTotal && visitPayments.length > 1) {
+      // Find phantom duplicate created with default notes
+      const phantomIdx = payments.findIndex(p => 
+        p.visit_id === visit.visit_id && 
+        (p.notes || '').includes('Payment for visit') &&
+        visitPayments.filter(vp => (vp.notes || '').includes('Payment for visit')).length > 1
+      );
+      if (phantomIdx !== -1) {
+        const removed = payments.splice(phantomIdx, 1)[0];
+        SupabaseService.sync('payment', 'delete', { payment_id: removed.payment_id });
         changed = true;
       }
+    }
+
+    // Keep visit amount_paid and balance aligned with real payments
+    const actualVisitPayments = payments.filter(p => p.visit_id === visit.visit_id);
+    const actualPaid = actualVisitPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const actualBalance = Math.max(0, visitTotal - actualPaid);
+
+    if (visit.amount_paid !== actualPaid || visit.balance !== actualBalance) {
+      visit.amount_paid = actualPaid;
+      visit.balance = actualBalance;
+      update('visits', visit.visit_id, { amount_paid: actualPaid, balance: actualBalance }, 'visit_id');
+      SupabaseService.sync('visit', 'update', { visit_id: visit.visit_id, amount_paid: actualPaid, balance: actualBalance });
     }
   });
 
@@ -826,8 +890,8 @@ export function reconcilePayments() {
 // ============================================================
 
 export function seedDemoData() {
-  // Never re-seed if Google Sheets is connected OR user explicitly cleared demo data
-  if (GoogleSheetsService.isConfigured()) return;
+  // Never re-seed if Supabase is connected OR user explicitly cleared demo data
+  if (SupabaseService.isConfigured()) return;
   if (localStorage.getItem(STORAGE_PREFIX + 'demo_cleared') === 'true') return;
 
   // Only seed if no data exists

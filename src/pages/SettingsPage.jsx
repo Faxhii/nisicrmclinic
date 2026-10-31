@@ -2,9 +2,13 @@ import { useState, useEffect } from 'react';
 import {
   Database, Cloud, RefreshCw, CheckCircle2, AlertCircle,
   Copy, Check, Trash2, Download, Upload, ExternalLink,
-  ShieldAlert, Sparkles, FileSpreadsheet, ArrowRight
+  ShieldAlert, Sparkles, Server, Eye, EyeOff, Terminal
 } from 'lucide-react';
-import { GoogleSheetsService } from '../services/googleSheetsService';
+import { SupabaseService } from '../services/supabaseService';
+import {
+  getSupabaseCredentials, saveSupabaseConfig,
+  clearSupabaseConfig, testSupabaseConnection
+} from '../services/supabaseClient';
 import {
   clearAllData, restoreDemoData, hasDemoData,
   getAllDataForExport, importAllDataFromJson,
@@ -14,247 +18,135 @@ import {
 import { useToast } from '../contexts/ToastContext';
 import Modal from '../components/Modal';
 
-// Sample Google Apps Script string for 1-click copy
-const GOOGLE_APPS_SCRIPT_CODE = `/**
- * ============================================================
- * NisiClinic Dental CRM — Google Apps Script Backend
- * ============================================================
- */
-const SHEET_NAMES = { PATIENTS: 'Patients', VISITS: 'Visits', APPOINTMENTS: 'Appointments', PAYMENTS: 'Payments', MEDICINES: 'Medicines' };
+// Supabase PostgreSQL Schema SQL for 1-click copy
+const SUPABASE_SCHEMA_SQL = `-- ============================================================
+-- NisiClinic CRM — Supabase Database Schema
+-- Paste into Supabase Dashboard -> SQL Editor -> New query -> Run
+-- ============================================================
 
-const SCHEMAS = {
-  Patients: ['patient_id', 'name', 'phone', 'age', 'gender', 'date_of_birth', 'address', 'medical_notes', 'allergies', 'emergency_contact', 'created_at', 'is_archived'],
-  Visits: ['visit_id', 'patient_id', 'visit_date', 'complaint', 'diagnosis', 'clinical_notes', 'treatment', 'medicines_json', 'follow_up_date', 'total_amount', 'amount_paid', 'balance', 'created_by', 'created_at'],
-  Appointments: ['appointment_id', 'patient_id', 'date', 'time', 'reason', 'dentist', 'status', 'notes', 'created_at'],
-  Payments: ['payment_id', 'patient_id', 'visit_id', 'amount', 'payment_method', 'payment_date', 'notes', 'created_at'],
-  Medicines: ['medicine_id', 'name', 'generic_name', 'category', 'dosage_form', 'strength', 'unit_price', 'stock_qty', 'reorder_level', 'expiry_date', 'manufacturer', 'notes', 'created_at', 'updated_at']
-};
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-function getOrCreateSheet(sheetName) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(sheetName);
-  if (!sheet) {
-    sheet = ss.insertSheet(sheetName);
-    const headers = SCHEMAS[sheetName] || [];
-    if (headers.length > 0) {
-      sheet.appendRow(headers);
-      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#EEF2FF');
-      sheet.setFrozenRows(1);
-    }
-  }
-  return sheet;
-}
+CREATE TABLE IF NOT EXISTS patients (
+  patient_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  age TEXT,
+  gender TEXT,
+  date_of_birth TEXT,
+  address TEXT,
+  medical_notes TEXT,
+  allergies TEXT,
+  emergency_contact TEXT,
+  is_archived BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-function readSheetData(sheetName) {
-  const sheet = getOrCreateSheet(sheetName);
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  const headers = data[0];
-  const rows = [];
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row.some(c => c !== '' && c !== null)) continue;
-    const obj = {};
-    headers.forEach((h, idx) => {
-      let val = row[idx];
-      if (h === 'medicines_json' && typeof val === 'string' && val.trim().startsWith('[')) {
-        try { obj['medicines'] = JSON.parse(val); } catch(e) { obj['medicines'] = []; }
-      }
-      obj[h] = val;
-    });
-    rows.push(obj);
-  }
-  return rows;
-}
+CREATE TABLE IF NOT EXISTS visits (
+  visit_id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+  visit_date DATE NOT NULL,
+  complaint TEXT,
+  diagnosis TEXT,
+  clinical_notes TEXT,
+  treatment TEXT,
+  medicines JSONB DEFAULT '[]'::jsonb,
+  total_amount NUMERIC(12, 2) DEFAULT 0,
+  amount_paid NUMERIC(12, 2) DEFAULT 0,
+  balance NUMERIC(12, 2) DEFAULT 0,
+  payment_method TEXT DEFAULT 'Cash',
+  follow_up_date DATE,
+  created_by TEXT DEFAULT 'doctor',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-function objectToRow(obj, schema) {
-  return schema.map(h => {
-    if (h === 'medicines_json') return JSON.stringify(obj.medicines || []);
-    return obj[h] !== undefined && obj[h] !== null ? obj[h] : '';
-  });
-}
+CREATE TABLE IF NOT EXISTS payments (
+  payment_id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+  visit_id TEXT REFERENCES visits(visit_id) ON DELETE SET NULL,
+  amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  payment_method TEXT DEFAULT 'Cash',
+  payment_date DATE NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-function doGet(e) {
-  try {
-    const action = (e && e.parameter && e.parameter.action) || 'ping';
-    if (action === 'ping') {
-      return jsonResponse({
-        status: 'success',
-        message: 'NisiClinic Google Sheets API is connected',
-        spreadsheetName: SpreadsheetApp.getActiveSpreadsheet().getName(),
-        timestamp: new Date().toISOString()
-      });
-    }
-    if (action === 'getAll') {
-      return jsonResponse({
-        status: 'success',
-        data: {
-          patients: readSheetData(SHEET_NAMES.PATIENTS),
-          visits: readSheetData(SHEET_NAMES.VISITS),
-          appointments: readSheetData(SHEET_NAMES.APPOINTMENTS),
-          payments: readSheetData(SHEET_NAMES.PAYMENTS),
-          medicines: readSheetData(SHEET_NAMES.MEDICINES)
-        }
-      });
-    }
-    return jsonResponse({ status: 'error', message: 'Unknown action' });
-  } catch(err) {
-    return jsonResponse({ status: 'error', message: err.toString() });
-  }
-}
+CREATE TABLE IF NOT EXISTS appointments (
+  appointment_id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  time TEXT,
+  reason TEXT,
+  dentist TEXT DEFAULT 'Dr. Nisi',
+  status TEXT DEFAULT 'Confirmed',
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-function doPost(e) {
-  try {
-    let payload = {};
-    if (e && e.postData && e.postData.contents) payload = JSON.parse(e.postData.contents);
-    const action = payload.action || 'syncAll';
+CREATE TABLE IF NOT EXISTS medicines (
+  medicine_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT DEFAULT 'Tablet',
+  dosage TEXT,
+  frequency TEXT,
+  duration TEXT,
+  instructions TEXT,
+  stock_qty INTEGER DEFAULT 0,
+  unit_price NUMERIC(10, 2) DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-    if (action === 'syncAll' && payload.data) {
-      if (payload.data.patients) replaceSheet(SHEET_NAMES.PATIENTS, payload.data.patients, SCHEMAS.Patients);
-      if (payload.data.visits) replaceSheet(SHEET_NAMES.VISITS, payload.data.visits, SCHEMAS.Visits);
-      if (payload.data.appointments) replaceSheet(SHEET_NAMES.APPOINTMENTS, payload.data.appointments, SCHEMAS.Appointments);
-      if (payload.data.payments) replaceSheet(SHEET_NAMES.PAYMENTS, payload.data.payments, SCHEMAS.Payments);
-      if (payload.data.medicines) replaceSheet(SHEET_NAMES.MEDICINES, payload.data.medicines, SCHEMAS.Medicines);
-      return jsonResponse({ status: 'success', message: 'Synchronized all collections' });
-    }
+CREATE TABLE IF NOT EXISTS medicine_stock_logs (
+  log_id TEXT PRIMARY KEY,
+  medicine_id TEXT NOT NULL REFERENCES medicines(medicine_id) ON DELETE CASCADE,
+  change_qty INTEGER NOT NULL,
+  previous_qty INTEGER NOT NULL,
+  new_qty INTEGER NOT NULL,
+  reason TEXT,
+  reference_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-    if (action === 'createPatient' && payload.patient) {
-      getOrCreateSheet(SHEET_NAMES.PATIENTS).appendRow(objectToRow(payload.patient, SCHEMAS.Patients));
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'updatePatient' && payload.patient_id && payload.updates) {
-      updateRowById(SHEET_NAMES.PATIENTS, 'patient_id', payload.patient_id, payload.updates, SCHEMAS.Patients);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'deletePatient' && payload.patient_id) {
-      deleteRowById(SHEET_NAMES.PATIENTS, 'patient_id', payload.patient_id);
-      deleteRowsByFilter(SHEET_NAMES.VISITS, 'patient_id', payload.patient_id);
-      deleteRowsByFilter(SHEET_NAMES.PAYMENTS, 'patient_id', payload.patient_id);
-      deleteRowsByFilter(SHEET_NAMES.APPOINTMENTS, 'patient_id', payload.patient_id);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'deleteAppointment' && payload.appointment_id) {
-      deleteRowById(SHEET_NAMES.APPOINTMENTS, 'appointment_id', payload.appointment_id);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'createVisit' && payload.visit) {
-      getOrCreateSheet(SHEET_NAMES.VISITS).appendRow(objectToRow(payload.visit, SCHEMAS.Visits));
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'updateVisit' && payload.visit_id && payload.updates) {
-      updateRowById(SHEET_NAMES.VISITS, 'visit_id', payload.visit_id, payload.updates, SCHEMAS.Visits);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'deleteVisit' && payload.visit_id) {
-      deleteRowById(SHEET_NAMES.VISITS, 'visit_id', payload.visit_id);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'createAppointment' && payload.appointment) {
-      getOrCreateSheet(SHEET_NAMES.APPOINTMENTS).appendRow(objectToRow(payload.appointment, SCHEMAS.Appointments));
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'updateAppointment' && payload.appointment_id && payload.updates) {
-      updateRowById(SHEET_NAMES.APPOINTMENTS, 'appointment_id', payload.appointment_id, payload.updates, SCHEMAS.Appointments);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'createPayment' && payload.payment) {
-      getOrCreateSheet(SHEET_NAMES.PAYMENTS).appendRow(objectToRow(payload.payment, SCHEMAS.Payments));
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'updatePayment' && payload.payment_id && payload.updates) {
-      updateRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id, payload.updates, SCHEMAS.Payments);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'deletePayment' && payload.payment_id) {
-      deleteRowById(SHEET_NAMES.PAYMENTS, 'payment_id', payload.payment_id);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'createMedicine' && payload.medicine) {
-      getOrCreateSheet(SHEET_NAMES.MEDICINES).appendRow(objectToRow(payload.medicine, SCHEMAS.Medicines));
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'updateMedicine' && payload.medicine_id && payload.updates) {
-      updateRowById(SHEET_NAMES.MEDICINES, 'medicine_id', payload.medicine_id, payload.updates, SCHEMAS.Medicines);
-      return jsonResponse({ status: 'success' });
-    }
-    if (action === 'deleteMedicine' && payload.medicine_id) {
-      deleteRowById(SHEET_NAMES.MEDICINES, 'medicine_id', payload.medicine_id);
-      return jsonResponse({ status: 'success' });
-    }
-    return jsonResponse({ status: 'error', message: 'Unknown action' });
-  } catch(err) {
-    return jsonResponse({ status: 'error', message: err.toString() });
-  }
-}
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_patients_name ON patients(name);
+CREATE INDEX IF NOT EXISTS idx_patients_phone ON patients(phone);
+CREATE INDEX IF NOT EXISTS idx_visits_patient_id ON visits(patient_id);
+CREATE INDEX IF NOT EXISTS idx_visits_date ON visits(visit_date);
+CREATE INDEX IF NOT EXISTS idx_payments_patient_id ON payments(patient_id);
+CREATE INDEX IF NOT EXISTS idx_payments_visit_id ON payments(visit_id);
+CREATE INDEX IF NOT EXISTS idx_appointments_patient_id ON appointments(patient_id);
 
-function replaceSheet(sheetName, items, schema) {
-  const sheet = getOrCreateSheet(sheetName);
-  sheet.clearContents();
-  sheet.appendRow(schema);
-  sheet.getRange(1, 1, 1, schema.length).setFontWeight('bold').setBackground('#EEF2FF');
-  if (items && items.length > 0) {
-    const rows = items.map(item => objectToRow(item, schema));
-    sheet.getRange(2, 1, rows.length, schema.length).setValues(rows);
-  }
-}
+-- Enable Row Level Security & Public Access for CRM
+ALTER TABLE patients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE visits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE medicines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE medicine_stock_logs ENABLE ROW LEVEL SECURITY;
 
-function updateRowById(sheetName, idColName, idValue, updates, schema) {
-  const sheet = getOrCreateSheet(sheetName);
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) { if (schema) sheet.appendRow(objectToRow({ [idColName]: idValue, ...updates }, schema)); return; }
-  const headers = data[0];
-  const idColIdx = headers.indexOf(idColName);
-  if (idColIdx === -1) return;
-  let found = false;
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][idColIdx]) === String(idValue)) {
-      headers.forEach((h, c) => { if (updates[h] !== undefined) sheet.getRange(i+1, c+1).setValue(updates[h]); });
-      found = true; break;
-    }
-  }
-  if (!found && schema) sheet.appendRow(objectToRow({ [idColName]: idValue, ...updates }, schema));
-}
-
-function deleteRowById(sheetName, idColName, idValue) {
-  const sheet = getOrCreateSheet(sheetName);
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return;
-  const headers = data[0];
-  const idColIdx = headers.indexOf(idColName);
-  if (idColIdx === -1) return;
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][idColIdx]) === String(idValue)) { sheet.deleteRow(i+1); break; }
-  }
-}
-
-function deleteRowsByFilter(sheetName, colName, colValue) {
-  const sheet = getOrCreateSheet(sheetName);
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return;
-  const headers = data[0];
-  const colIdx = headers.indexOf(colName);
-  if (colIdx === -1) return;
-  for (let i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][colIdx]) === String(colValue)) { sheet.deleteRow(i+1); }
-  }
-}
-
-function jsonResponse(data) {
-  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
-}`;
+CREATE POLICY "Anon full access on patients" ON patients FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access on visits" ON visits FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access on payments" ON payments FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access on appointments" ON appointments FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access on medicines" ON medicines FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access on medicine_stock_logs" ON medicine_stock_logs FOR ALL USING (true) WITH CHECK (true);
+`;
 
 export default function SettingsPage() {
   const toast = useToast();
 
-  const [sheetsUrl, setSheetsUrl] = useState('');
-  const [autoSync, setAutoSync] = useState(true);
-  const [lastSynced, setLastSynced] = useState(null);
+  const [supabaseUrl, setSupabaseUrl] = useState('');
+  const [supabaseKey, setSupabaseKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [pushing, setPushing] = useState(false);
 
-  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedSchema, setCopiedSchema] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [dataStats, setDataStats] = useState({ patients: 0, visits: 0, appointments: 0, payments: 0 });
@@ -264,9 +156,9 @@ export default function SettingsPage() {
   }, []);
 
   function refreshState() {
-    setSheetsUrl(GoogleSheetsService.getUrl());
-    setAutoSync(GoogleSheetsService.getAutoSync());
-    setLastSynced(GoogleSheetsService.getLastSynced());
+    const creds = getSupabaseCredentials();
+    setSupabaseUrl(creds.url);
+    setSupabaseKey(creds.key);
     setIsDemo(hasDemoData());
     setDataStats({
       patients: PatientsService.getAll().length,
@@ -276,34 +168,38 @@ export default function SettingsPage() {
     });
   }
 
-  const handleSaveUrl = async () => {
-    if (!sheetsUrl.trim()) {
-      GoogleSheetsService.setUrl('');
+  const handleSaveConfig = async () => {
+    if (!supabaseUrl.trim() && !supabaseKey.trim()) {
+      clearSupabaseConfig();
       setTestResult(null);
-      toast.info('Google Sheets URL removed. Working in local offline storage.');
+      toast.info('Supabase credentials cleared. Working in local storage mode.');
       refreshState();
       return;
     }
 
-    if (!sheetsUrl.startsWith('https://script.google.com/macros/s/')) {
-      toast.error('Invalid URL. It must start with https://script.google.com/macros/s/...');
+    if (!supabaseUrl.startsWith('https://') && !supabaseUrl.startsWith('http://')) {
+      toast.error('Invalid URL. It must start with https:// (e.g. https://your-ref.supabase.co)');
       return;
     }
 
-    GoogleSheetsService.setUrl(sheetsUrl.trim());
-    toast.success('Google Sheets Web App URL saved!');
+    if (!supabaseKey.trim()) {
+      toast.error('Please enter your Supabase anon/public API key.');
+      return;
+    }
 
-    // Automatically pull and sync right away so the user doesn't have to manually click pull on a new device!
+    saveSupabaseConfig(supabaseUrl.trim(), supabaseKey.trim());
+    toast.success('Supabase credentials saved!');
+
+    // Automatically test & pull cloud data right away
     setSyncing(true);
     try {
-      const counts = await GoogleSheetsService.pullFromSheet();
+      const counts = await SupabaseService.pullAll();
       reconcilePayments();
-      toast.success(`Connected & Synced! Loaded ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.paymentsCount} payments.`);
-      try {
-        window.dispatchEvent(new Event('nisiclinic_data_synced'));
-      } catch {}
+      if (counts) {
+        toast.success(`Connected & Synced! Loaded ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.paymentsCount} payments from Supabase.`);
+      }
     } catch (err) {
-      console.warn('Initial sync notice:', err);
+      console.warn('Initial Supabase pull notice:', err);
     } finally {
       setSyncing(false);
       refreshState();
@@ -311,139 +207,160 @@ export default function SettingsPage() {
   };
 
   const handleTestConnection = async () => {
-    if (!sheetsUrl.trim()) {
-      toast.error('Please enter a Google Apps Script Web App URL first.');
+    if (!supabaseUrl.trim() || !supabaseKey.trim()) {
+      toast.error('Please enter both your Supabase URL and anon key first.');
       return;
     }
 
     setTesting(true);
     setTestResult(null);
 
-    const res = await GoogleSheetsService.testConnection(sheetsUrl.trim());
+    const res = await testSupabaseConnection(supabaseUrl.trim(), supabaseKey.trim());
     setTesting(false);
     setTestResult(res);
 
     if (res.success) {
       toast.success(res.message);
-      GoogleSheetsService.setUrl(sheetsUrl.trim());
+      saveSupabaseConfig(supabaseUrl.trim(), supabaseKey.trim());
     } else {
-      toast.error(res.error);
+      toast.error(res.message);
     }
   };
 
-  const handleToggleAutoSync = (e) => {
-    const val = e.target.checked;
-    setAutoSync(val);
-    GoogleSheetsService.setAutoSync(val);
-    toast.info(`Auto-sync ${val ? 'enabled' : 'disabled'}`);
+  const handleDisconnect = () => {
+    clearSupabaseConfig();
+    setSupabaseUrl('');
+    setSupabaseKey('');
+    setTestResult(null);
+    toast.info('Disconnected from Supabase. Working in local offline storage.');
+    refreshState();
   };
 
-  const handlePullFromSheet = async () => {
-    if (!GoogleSheetsService.isConfigured()) {
-      toast.error('Please configure and test your Google Sheets URL first.');
+  const handlePullFromSupabase = async () => {
+    if (!SupabaseService.isConfigured()) {
+      toast.error('Please configure your Supabase credentials first.');
       return;
     }
 
     setSyncing(true);
     try {
-      const counts = await GoogleSheetsService.pullFromSheet();
+      const counts = await SupabaseService.pullAll();
       reconcilePayments();
-      toast.success(`Synced from Google Sheets: ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.paymentsCount} payments, ${counts.appointmentsCount} appointments.`);
+      toast.success(`Synced from Supabase: ${counts.patientsCount} patients, ${counts.visitsCount} visits, ${counts.paymentsCount} payments.`);
       try {
         window.dispatchEvent(new Event('nisiclinic_data_synced'));
       } catch {}
       refreshState();
     } catch (err) {
-      toast.error(err.message || 'Failed to pull from Google Sheets.');
+      toast.error(err.message || 'Failed to pull from Supabase.');
     } finally {
       setSyncing(false);
     }
   };
 
-  const handlePushToSheet = async () => {
-    if (!GoogleSheetsService.isConfigured()) {
-      toast.error('Please configure and test your Google Sheets URL first.');
+  const handlePushToSupabase = async () => {
+    if (!SupabaseService.isConfigured()) {
+      toast.error('Please configure your Supabase credentials first.');
       return;
     }
 
     setPushing(true);
     try {
-      const allData = getAllDataForExport();
-      await GoogleSheetsService.pushToSheet(allData);
-      toast.success('Successfully uploaded all local CRM data to Google Sheets!');
+      await SupabaseService.pushAll();
+      toast.success('Successfully uploaded local CRM data into Supabase!');
       refreshState();
     } catch (err) {
-      toast.error(err.message || 'Failed to push to Google Sheets.');
+      toast.error(err.message || 'Failed to push to Supabase.');
     } finally {
       setPushing(false);
     }
   };
 
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
-    setCopiedCode(true);
-    toast.success('Google Apps Script code copied to clipboard!');
-    setTimeout(() => setCopiedCode(false), 2500);
+  const handleCopySchema = async () => {
+    try {
+      await navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
+      setCopiedSchema(true);
+      toast.success('Supabase SQL Schema copied to clipboard!');
+      setTimeout(() => setCopiedSchema(false), 3000);
+    } catch {
+      toast.error('Failed to copy. Please manually copy from the file supabase-schema.sql');
+    }
   };
 
   const handleClearDemoData = () => {
     clearAllData();
     setShowClearModal(false);
-    toast.success('Demo data removed. You now have a clean slate for real clinic records!');
     refreshState();
+    toast.success('All records cleared! You now have a clean slate for real clinic records.');
+    try {
+      window.dispatchEvent(new Event('nisiclinic_data_synced'));
+    } catch {}
   };
 
   const handleRestoreDemoData = () => {
     restoreDemoData();
-    toast.success('Demo sample data restored.');
     refreshState();
+    toast.success('Demo sample data restored.');
+    try {
+      window.dispatchEvent(new Event('nisiclinic_data_synced'));
+    } catch {}
   };
 
   const handleExportBackup = () => {
     const data = getAllDataForExport();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `nisiclinic_crm_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `nisiclinic_backup_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Backup file downloaded.');
   };
 
   const handleImportBackup = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const res = importAllDataFromJson(event.target.result);
-      if (res.success) {
-        toast.success('Backup restored successfully!');
-        refreshState();
-      } else {
-        toast.error('Invalid backup file: ' + res.error);
+      try {
+        const json = JSON.parse(event.target.result);
+        const res = importAllDataFromJson(json);
+        if (res.success) {
+          reconcilePayments();
+          toast.success('Backup restored successfully!');
+          refreshState();
+          try {
+            window.dispatchEvent(new Event('nisiclinic_data_synced'));
+          } catch {}
+        } else {
+          toast.error('Invalid backup file: ' + res.error);
+        }
+      } catch {
+        toast.error('Could not parse JSON file.');
       }
     };
     reader.readAsText(file);
     e.target.value = '';
   };
 
-  const isConfigured = GoogleSheetsService.isConfigured();
+  const isConfigured = SupabaseService.isConfigured();
 
   return (
     <div className="app-content animate-in">
       {/* Page Header */}
       <div className="page-header">
-        <h1 className="page-title">Settings & Cloud Sync</h1>
+        <h1 className="page-title">Settings & Cloud Database</h1>
         <p className="page-subtitle">
-          Manage your live Google Sheets database, backup real patient records, and control sample data.
+          Connect your live Supabase (PostgreSQL) backend, manage database records, and control clinic backups.
         </p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--space-6)', marginBottom: 'var(--space-6)' }}>
         
-        {/* Google Sheets Connection Card */}
+        {/* Supabase Connection Card */}
         <div className="card">
           <div className="card-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -453,12 +370,12 @@ export default function SettingsPage() {
                 color: isConfigured ? 'var(--color-success)' : 'var(--color-accent)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}>
-                <FileSpreadsheet size={20} />
+                <Server size={20} />
               </div>
               <div>
-                <h3 className="card-title">Google Sheets Integration</h3>
+                <h3 className="card-title">Supabase (PostgreSQL) Cloud</h3>
                 <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                  Use your Google Sheet as a live spreadsheet database
+                  Production cloud database with real-time sync
                 </p>
               </div>
             </div>
@@ -469,23 +386,55 @@ export default function SettingsPage() {
           </div>
 
           <div className="card-body">
+            {/* Project URL */}
             <div className="form-group" style={{ marginBottom: 'var(--space-4)' }}>
-              <label className="form-label" htmlFor="sheets-url-input">
-                Google Apps Script Web App URL
+              <label className="form-label" htmlFor="supabase-url-input">
+                Supabase Project URL
               </label>
               <input
-                id="sheets-url-input"
+                id="supabase-url-input"
                 type="url"
                 className="form-input"
-                placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-                value={sheetsUrl}
-                onChange={e => setSheetsUrl(e.target.value)}
+                placeholder="https://your-project-id.supabase.co"
+                value={supabaseUrl}
+                onChange={e => setSupabaseUrl(e.target.value)}
               />
               <span className="form-hint">
-                Deploy your Google Sheet script as a Web App (access: "Anyone") and paste the URL here.
+                Found in your Supabase Dashboard &gt; Project Settings &gt; API &gt; Project URL
               </span>
             </div>
 
+            {/* Anon Key */}
+            <div className="form-group" style={{ marginBottom: 'var(--space-4)' }}>
+              <label className="form-label" htmlFor="supabase-key-input">
+                Supabase Anon / Public API Key
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  id="supabase-key-input"
+                  type={showKey ? 'text' : 'password'}
+                  className="form-input"
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  value={supabaseKey}
+                  onChange={e => setSupabaseKey(e.target.value)}
+                  style={{ paddingRight: '40px' }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-icon btn-ghost btn-sm"
+                  onClick={() => setShowKey(!showKey)}
+                  style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)' }}
+                  title={showKey ? 'Hide key' : 'Show key'}
+                >
+                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <span className="form-hint">
+                Found in your Supabase Dashboard &gt; Project Settings &gt; API &gt; Project API keys (anon / public)
+              </span>
+            </div>
+
+            {/* Test Connection Results Alert */}
             {testResult && (
               <div style={{
                 padding: 'var(--space-3) var(--space-4)',
@@ -503,27 +452,30 @@ export default function SettingsPage() {
                     <CheckCircle2 size={18} color="var(--color-success)" />
                     <div>
                       <div style={{ fontWeight: 600, color: 'var(--color-success-text)' }}>
-                        Connected: {testResult.spreadsheetName || 'Active Google Sheet'}
+                        {testResult.message}
                       </div>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-success-text)' }}>
-                        Ready to sync Patients, Visits, Appointments, and Payments.
-                      </div>
+                      {testResult.needsSchema && (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning-text)', marginTop: '4px' }}>
+                          💡 Please copy the SQL Schema below and run it in the Supabase SQL Editor.
+                        </div>
+                      )}
                     </div>
                   </>
                 ) : (
                   <>
                     <AlertCircle size={18} color="var(--color-error)" />
-                    <div style={{ color: 'var(--color-error-text)' }}>{testResult.error}</div>
+                    <div style={{ color: 'var(--color-error-text)' }}>{testResult.message}</div>
                   </>
                 )}
               </div>
             )}
 
+            {/* Action Buttons */}
             <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-4)' }}>
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleTestConnection}
-                disabled={testing || !sheetsUrl}
+                disabled={testing || !supabaseUrl || !supabaseKey}
               >
                 <RefreshCw size={14} className={testing ? 'spin' : ''} />
                 {testing ? 'Testing...' : 'Test Connection'}
@@ -531,12 +483,23 @@ export default function SettingsPage() {
 
               <button
                 className="btn btn-primary btn-sm"
-                onClick={handleSaveUrl}
+                onClick={handleSaveConfig}
               >
-                Save URL
+                Save & Connect
               </button>
+
+              {isConfigured && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={handleDisconnect}
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  Disconnect
+                </button>
+              )}
             </div>
 
+            {/* Sync Tools when connected */}
             {isConfigured && (
               <div style={{
                 padding: 'var(--space-4)',
@@ -544,55 +507,40 @@ export default function SettingsPage() {
                 borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--color-border-light)'
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Live Auto-Sync</div>
-                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                      Automatically save newly created patients, visits, appointments to your Google Sheet in background.
-                    </div>
-                  </div>
-                  <label className="form-checkbox" style={{ margin: 0 }}>
-                    <input
-                      type="checkbox"
-                      checked={autoSync}
-                      onChange={handleToggleAutoSync}
-                    />
-                  </label>
+                <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-1)' }}>
+                  Cloud Synchronization Tools
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-3)' }}>
+                  Changes sync automatically in the background. You can also manually pull or push data anytime.
                 </div>
 
-                <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={handlePullFromSheet}
+                    onClick={handlePullFromSupabase}
                     disabled={syncing}
-                    title="Pull latest rows from Google Sheets"
+                    title="Pull latest patients and records from Supabase"
                   >
                     <RefreshCw size={14} className={syncing ? 'spin' : ''} />
-                    {syncing ? 'Pulling...' : 'Pull from Sheet'}
+                    {syncing ? 'Syncing...' : 'Pull from Supabase'}
                   </button>
 
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={handlePushToSheet}
+                    onClick={handlePushToSupabase}
                     disabled={pushing}
-                    title="Push local patients and visits to Google Sheets"
+                    title="Upload local offline records to Supabase"
                   >
                     <Cloud size={14} />
-                    {pushing ? 'Uploading...' : 'Push Local to Sheet'}
+                    {pushing ? 'Uploading...' : 'Push Local to Supabase'}
                   </button>
                 </div>
-
-                {lastSynced && (
-                  <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
-                    Last synchronized: {new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </div>
-                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* Real Data vs Demo Data Card */}
+        {/* Database & Records Summary Card */}
         <div className="card">
           <div className="card-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -605,15 +553,15 @@ export default function SettingsPage() {
                 <Database size={20} />
               </div>
               <div>
-                <h3 className="card-title">Database & Records</h3>
+                <h3 className="card-title">Database Records</h3>
                 <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                  Current active data state
+                  Current active data counts
                 </p>
               </div>
             </div>
 
             <span className={`badge ${isDemo ? 'badge-waiting' : 'badge-completed'}`}>
-              {isDemo ? 'Demo Mode' : 'Clean / Real Data'}
+              {isDemo ? 'Demo Mode' : 'Clean / Live Data'}
             </span>
           </div>
 
@@ -649,10 +597,10 @@ export default function SettingsPage() {
               marginBottom: 'var(--space-4)'
             }}>
               <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-1)' }}>
-                Ready to enter real clinic patients?
+                Clean Slate for Real Clinic
               </div>
               <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-                Clear the 8 mock patients and sample records with one click so you can start with a fresh, empty system for your real clinic.
+                Clear mock patients and start completely fresh for your real clinic.
               </p>
 
               <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
@@ -662,7 +610,7 @@ export default function SettingsPage() {
                   id="clear-demo-data-btn"
                 >
                   <Trash2 size={14} />
-                  Clear Demo Data
+                  Clear All Data
                 </button>
 
                 {!isDemo && (
@@ -713,7 +661,7 @@ export default function SettingsPage() {
 
       </div>
 
-      {/* Step by step setup guide */}
+      {/* Supabase SQL Migration Schema Card */}
       <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
         <div className="card-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -722,73 +670,80 @@ export default function SettingsPage() {
               background: 'var(--color-accent-light)', color: 'var(--color-accent)',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-              <ExternalLink size={20} />
+              <Terminal size={20} />
             </div>
             <div>
-              <h3 className="card-title">How to Connect Your Google Sheet in 2 Minutes</h3>
+              <h3 className="card-title">Supabase SQL Schema & Migration Script</h3>
               <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                Follow these 5 simple steps to set up Google Apps Script as your cloud database.
+                Run this SQL script in your Supabase project to generate all tables, foreign keys, and indexes.
               </p>
             </div>
           </div>
 
           <button
             className="btn btn-primary btn-sm"
-            onClick={handleCopyCode}
-            id="copy-script-code-btn"
+            onClick={handleCopySchema}
+            id="copy-supabase-schema-btn"
           >
-            {copiedCode ? <Check size={14} /> : <Copy size={14} />}
-            {copiedCode ? 'Code Copied!' : 'Copy Script Code'}
+            {copiedSchema ? <Check size={14} /> : <Copy size={14} />}
+            {copiedSchema ? 'SQL Copied!' : 'Copy SQL Schema'}
           </button>
         </div>
 
         <div className="card-body">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-4)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
             
             <div style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>1. Create Sheet</div>
+              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>1. Open Supabase</div>
               <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                Go to <a href="https://sheets.new" target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', textDecoration: 'underline' }}>sheets.new</a> to create a new spreadsheet. Name it <strong>"NisiClinic CRM Database"</strong>.
+                Log into <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', textDecoration: 'underline' }}>supabase.com/dashboard</a> and open your project.
               </p>
             </div>
 
             <div style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>2. Open Apps Script</div>
+              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>2. SQL Editor</div>
               <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                In your Google Sheet, click the top menu: <strong>Extensions &gt; Apps Script</strong>.
+                In the left sidebar, click <strong>SQL Editor</strong> &gt; <strong>New query</strong>.
               </p>
             </div>
 
             <div style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>3. Paste Code</div>
+              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>3. Paste & Run</div>
               <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                Erase existing code in <code>Code.gs</code>, click the <strong>Copy Script Code</strong> button above, and paste it. Click <strong>Save (Ctrl+S)</strong>.
+                Click the <strong>Copy SQL Schema</strong> button above, paste it into the editor, and click <strong>Run</strong>.
               </p>
             </div>
 
             <div style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>4. Deploy as Web App</div>
+              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>4. Connect CRM</div>
               <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                Click <strong>Deploy &gt; New deployment</strong>. Select <strong>Web app</strong>. Set <em>Who has access</em> to <strong>"Anyone"</strong> (Required). Click <strong>Deploy</strong>.
-              </p>
-            </div>
-
-            <div style={{ padding: 'var(--space-3)', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ fontWeight: 700, color: 'var(--color-accent)', marginBottom: 'var(--space-1)' }}>5. Paste URL Here</div>
-              <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                Copy the Web App URL (starts with <code>https://script.google.com/...</code>) and paste it into the input box above, then click <strong>Test Connection</strong>.
+                Copy your <strong>Project URL</strong> and <strong>Anon Key</strong> from Project Settings &gt; API, paste them above, and click <strong>Save & Connect</strong>.
               </p>
             </div>
 
           </div>
+
+          {/* Collapsible Schema Preview */}
+          <div style={{
+            background: '#1E1E2E',
+            color: '#CDD6F4',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-4)',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            maxHeight: '220px',
+            overflowY: 'auto'
+          }}>
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{SUPABASE_SCHEMA_SQL}</pre>
+          </div>
         </div>
       </div>
 
-      {/* Confirmation Modal to Clear Demo Data */}
+      {/* Confirmation Modal to Clear Data */}
       <Modal
         isOpen={showClearModal}
         onClose={() => setShowClearModal(false)}
-        title="Clear Demo & Sample Data?"
+        title="Clear All Records?"
       >
         <div style={{ textAlign: 'center', padding: 'var(--space-2) 0' }}>
           <div style={{
@@ -801,10 +756,10 @@ export default function SettingsPage() {
           </div>
 
           <p style={{ fontSize: 'var(--font-size-base)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-            Are you sure you want to remove all mock data?
+            Are you sure you want to clear all data?
           </p>
           <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-6)' }}>
-            This will permanently remove the 8 sample demo patients and their visits, payments, and appointments. You will have a clean, blank CRM to begin registering real clinic patients.
+            This will permanently remove all patients, visits, payments, and appointments. You will have a clean, blank CRM to begin registering real clinic patients.
           </p>
 
           <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
@@ -818,7 +773,7 @@ export default function SettingsPage() {
               className="btn btn-danger"
               onClick={handleClearDemoData}
             >
-              Yes, Clear Sample Data
+              Yes, Clear All Data
             </button>
           </div>
         </div>

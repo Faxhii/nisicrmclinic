@@ -3,33 +3,36 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import BottomNav from './BottomNav';
-import { GoogleSheetsService } from '../services/googleSheetsService';
+import { SupabaseService } from '../services/supabaseService';
 import { reconcilePayments } from '../services/dataService';
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    // Reconcile any missing visit payments immediately
+    // Reconcile and fix any payment discrepancies immediately
     reconcilePayments();
 
-    // If Google Sheets is configured, auto-pull on launch to stay up to date with other devices
-    if (GoogleSheetsService.isConfigured()) {
-      GoogleSheetsService.pullFromSheet()
+    // If Supabase is configured, auto-pull on launch to stay in sync with cloud database
+    if (SupabaseService.isConfigured()) {
+      SupabaseService.pullAll()
         .then(() => {
           reconcilePayments();
         })
         .catch(err => {
-          console.warn('Initial cloud sync notice:', err);
+          console.warn('Initial Supabase sync notice:', err);
         });
+
+      // Subscribe to Realtime Postgres Changes
+      SupabaseService.subscribeRealtime();
     }
 
     // Auto-refresh when tab is focused (throttled to at most once per 30s)
     let lastSync = Date.now();
     const handleFocus = () => {
-      if (Date.now() - lastSync > 30000 && GoogleSheetsService.isConfigured()) {
+      if (Date.now() - lastSync > 30000 && SupabaseService.isConfigured()) {
         lastSync = Date.now();
-        GoogleSheetsService.pullFromSheet()
+        SupabaseService.pullAll()
           .then(() => {
             reconcilePayments();
           })
@@ -38,7 +41,10 @@ export default function AppLayout() {
     };
 
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      SupabaseService.unsubscribeRealtime();
+    };
   }, []);
 
   return (
