@@ -21,7 +21,8 @@ const SHEET_NAMES = {
   PATIENTS: 'Patients',
   VISITS: 'Visits',
   APPOINTMENTS: 'Appointments',
-  PAYMENTS: 'Payments'
+  PAYMENTS: 'Payments',
+  MEDICINES: 'Medicines'
 };
 
 const SCHEMAS = {
@@ -42,6 +43,11 @@ const SCHEMAS = {
   Payments: [
     'payment_id', 'patient_id', 'visit_id', 'amount',
     'payment_method', 'payment_date', 'notes', 'created_at'
+  ],
+  Medicines: [
+    'medicine_id', 'name', 'generic_name', 'category', 'dosage_form',
+    'strength', 'unit_price', 'stock_qty', 'reorder_level',
+    'expiry_date', 'manufacturer', 'notes', 'created_at', 'updated_at'
   ]
 };
 
@@ -122,7 +128,8 @@ function doGet(e) {
         patients: readSheetData(SHEET_NAMES.PATIENTS),
         visits: readSheetData(SHEET_NAMES.VISITS),
         appointments: readSheetData(SHEET_NAMES.APPOINTMENTS),
-        payments: readSheetData(SHEET_NAMES.PAYMENTS)
+        payments: readSheetData(SHEET_NAMES.PAYMENTS),
+        medicines: readSheetData(SHEET_NAMES.MEDICINES)
       };
       return jsonResponse({
         status: 'success',
@@ -154,6 +161,7 @@ function doPost(e) {
       if (data.visits) replaceSheetData(SHEET_NAMES.VISITS, data.visits, SCHEMAS.Visits);
       if (data.appointments) replaceSheetData(SHEET_NAMES.APPOINTMENTS, data.appointments, SCHEMAS.Appointments);
       if (data.payments) replaceSheetData(SHEET_NAMES.PAYMENTS, data.payments, SCHEMAS.Payments);
+      if (data.medicines) replaceSheetData(SHEET_NAMES.MEDICINES, data.medicines, SCHEMAS.Medicines);
 
       return jsonResponse({
         status: 'success',

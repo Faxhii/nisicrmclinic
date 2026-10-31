@@ -16,6 +16,7 @@ import NewPaymentPage from './pages/NewPaymentPage';
 import FollowUpsPage from './pages/FollowUpsPage';
 import MorePage from './pages/MorePage';
 import SettingsPage from './pages/SettingsPage';
+import MedicinesPage from './pages/MedicinesPage';
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -61,6 +62,7 @@ function AppRoutes() {
         <Route path="/appointments/new" element={<NewAppointmentPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/payments/new" element={<NewPaymentPage />} />
+        <Route path="/medicines" element={<MedicinesPage />} />
         <Route path="/follow-ups" element={<FollowUpsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/more" element={<MorePage />} />

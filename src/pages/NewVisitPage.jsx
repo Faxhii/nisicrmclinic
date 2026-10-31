@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { PatientsService, VisitsService } from '../services/dataService';
+import { PatientsService, VisitsService, MedicinesService } from '../services/dataService';
 import { useToast } from '../contexts/ToastContext';
-import { ArrowLeft, Plus, X, Search } from 'lucide-react';
+import { ArrowLeft, Plus, X, Search, ChevronDown, Package } from 'lucide-react';
 
 export default function NewVisitPage() {
   const navigate = useNavigate();
@@ -29,6 +29,10 @@ export default function NewVisitPage() {
     payment_method: 'Cash',
     visit_date: new Date().toISOString().split('T')[0]
   });
+
+  // Medicine search state per row
+  const [medDropdowns, setMedDropdowns] = useState({});
+  const medInputRefs = useRef({});
 
   useEffect(() => {
     if (preselectedPatient) {
@@ -63,7 +67,7 @@ export default function NewVisitPage() {
   function addMedicine() {
     setForm(prev => ({
       ...prev,
-      medicines: [...prev.medicines, { name: '', dosage: '', instructions: '' }]
+      medicines: [...prev.medicines, { name: '', dosage: '', instructions: '', medicine_id: '', qty: 1, stock_qty: null }]
     }));
   }
 
@@ -80,6 +84,33 @@ export default function NewVisitPage() {
       ...prev,
       medicines: prev.medicines.filter((_, i) => i !== index)
     }));
+    setMedDropdowns(prev => { const n = { ...prev }; delete n[index]; return n; });
+  }
+
+  function handleMedSearch(index, query) {
+    updateMedicine(index, 'name', query);
+    updateMedicine(index, 'medicine_id', '');
+    updateMedicine(index, 'stock_qty', null);
+
+    if (query.trim().length >= 1) {
+      const results = MedicinesService.search(query).slice(0, 6);
+      setMedDropdowns(prev => ({ ...prev, [index]: results }));
+    } else {
+      setMedDropdowns(prev => ({ ...prev, [index]: [] }));
+    }
+  }
+
+  function selectMedicine(index, med) {
+    updateMedicine(index, 'name', med.name);
+    updateMedicine(index, 'medicine_id', med.medicine_id);
+    updateMedicine(index, 'dosage', med.strength || '');
+    updateMedicine(index, 'stock_qty', Number(med.stock_qty) || 0);
+    setMedDropdowns(prev => ({ ...prev, [index]: [] }));
+  }
+
+  function showMedDropdown(index) {
+    const allMeds = MedicinesService.getInStock().slice(0, 8);
+    setMedDropdowns(prev => ({ ...prev, [index]: allMeds }));
   }
 
   const totalAmount = Number(form.total_amount) || 0;
@@ -103,19 +134,24 @@ export default function NewVisitPage() {
     await new Promise(r => setTimeout(r, 500));
 
     try {
-      VisitsService.create({
+      const cleanMedicines = form.medicines.filter(m => m.name.trim());
+
+      const visit = VisitsService.create({
         patient_id: selectedPatient.patient_id,
         visit_date: form.visit_date,
         complaint: form.complaint,
         diagnosis: form.diagnosis,
         clinical_notes: form.clinical_notes,
         treatment: form.treatment,
-        medicines: form.medicines.filter(m => m.name.trim()),
+        medicines: cleanMedicines,
         follow_up_date: form.follow_up ? form.follow_up_date : '',
         total_amount: totalAmount,
         amount_paid: amountPaid,
         payment_method: form.payment_method
       });
+
+      // Auto-deduct stock for medicines selected from inventory
+      MedicinesService.deductForVisit(cleanMedicines, visit.visit_id, selectedPatient.patient_id);
 
       toast.success('Visit saved successfully');
       navigate(`/patients/${selectedPatient.patient_id}`);
@@ -283,7 +319,7 @@ export default function NewVisitPage() {
             </div>
           </div>
 
-          {/* Medicines */}
+          {/* Medicines — Enhanced with dropdown from inventory */}
           <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
             <div className="card-header">
               <h3 className="card-title">Medicines</h3>
@@ -304,7 +340,8 @@ export default function NewVisitPage() {
                   <div key={i} style={{
                     padding: 'var(--space-4)', background: 'var(--color-bg)',
                     borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)',
-                    position: 'relative'
+                    position: 'relative',
+                    border: med.medicine_id ? '1px solid var(--color-accent-light)' : '1px solid var(--color-border-light)'
                   }}>
                     <button
                       type="button"
@@ -318,17 +355,127 @@ export default function NewVisitPage() {
                     >
                       <X size={14} />
                     </button>
-                    <div className="form-row" style={{ marginBottom: 'var(--space-3)' }}>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">Medicine Name</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="e.g. Paracetamol"
-                          value={med.name}
-                          onChange={e => updateMedicine(i, 'name', e.target.value)}
-                        />
+
+                    {/* Stock badge if from inventory */}
+                    {med.medicine_id && (
+                      <div style={{
+                        position: 'absolute', top: '8px', right: '32px',
+                        display: 'flex', alignItems: 'center', gap: '4px',
+                        background: med.stock_qty > 0 ? 'var(--color-success-light)' : '#FEE2E2',
+                        color: med.stock_qty > 0 ? 'var(--color-success-text)' : '#EF4444',
+                        padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                        fontSize: '11px', fontWeight: 600
+                      }}>
+                        <Package size={10} />
+                        {med.stock_qty > 0 ? `${med.stock_qty} in stock` : 'Out of stock'}
                       </div>
+                    )}
+
+                    <div className="form-row" style={{ marginBottom: 'var(--space-3)' }}>
+                      {/* Medicine Name — Combo box (dropdown + free text) */}
+                      <div className="form-group" style={{ marginBottom: 0, position: 'relative', flex: 2 }}>
+                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          Medicine Name
+                          {med.medicine_id && (
+                            <span style={{
+                              fontSize: '10px', background: 'var(--color-accent-light)',
+                              color: 'var(--color-accent)', padding: '1px 6px',
+                              borderRadius: 'var(--radius-full)', fontWeight: 600
+                            }}>
+                              FROM STOCK
+                            </span>
+                          )}
+                        </label>
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            ref={el => medInputRefs.current[i] = el}
+                            type="text"
+                            className="form-input"
+                            placeholder="Type to search or enter custom name..."
+                            value={med.name}
+                            onChange={e => handleMedSearch(i, e.target.value)}
+                            onFocus={() => {
+                              if (!med.medicine_id && !med.name) showMedDropdown(i);
+                            }}
+                            onBlur={() => {
+                              setTimeout(() => {
+                                setMedDropdowns(prev => ({ ...prev, [i]: [] }));
+                              }, 200);
+                            }}
+                            style={{ paddingRight: '30px' }}
+                            autoComplete="off"
+                          />
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            onClick={() => {
+                              if (medDropdowns[i]?.length > 0) {
+                                setMedDropdowns(prev => ({ ...prev, [i]: [] }));
+                              } else {
+                                showMedDropdown(i);
+                                medInputRefs.current[i]?.focus();
+                              }
+                            }}
+                            style={{
+                              position: 'absolute', right: '4px', top: '50%',
+                              transform: 'translateY(-50%)', background: 'none',
+                              border: 'none', cursor: 'pointer', padding: '4px',
+                              color: 'var(--color-text-tertiary)'
+                            }}
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+
+                          {/* Dropdown */}
+                          {medDropdowns[i]?.length > 0 && (
+                            <div style={{
+                              position: 'absolute', top: '100%', left: 0, right: 0,
+                              marginTop: '4px', background: 'var(--color-surface)',
+                              borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
+                              boxShadow: 'var(--shadow-lg)', zIndex: 50, overflow: 'hidden',
+                              maxHeight: '220px', overflowY: 'auto'
+                            }}>
+                              {medDropdowns[i].map(m => {
+                                const qty = Number(m.stock_qty) || 0;
+                                return (
+                                  <button
+                                    type="button"
+                                    key={m.medicine_id}
+                                    onMouseDown={() => selectMedicine(i, m)}
+                                    style={{
+                                      width: '100%', padding: '8px 12px',
+                                      display: 'flex', alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      borderBottom: '1px solid var(--color-border-light)',
+                                      background: 'none', cursor: 'pointer', textAlign: 'left',
+                                      fontSize: 'var(--font-size-sm)',
+                                      opacity: qty <= 0 ? 0.5 : 1
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--color-surface-hover)'}
+                                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                  >
+                                    <div>
+                                      <div style={{ fontWeight: 600 }}>{m.name}</div>
+                                      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+                                        {m.category} · {m.dosage_form}{m.strength ? ` · ${m.strength}` : ''}
+                                      </div>
+                                    </div>
+                                    <span style={{
+                                      fontSize: '11px', fontWeight: 600,
+                                      padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                                      background: qty > 0 ? 'var(--color-success-light)' : '#FEE2E2',
+                                      color: qty > 0 ? 'var(--color-success-text)' : '#EF4444'
+                                    }}>
+                                      {qty > 0 ? `${qty} pcs` : 'Out'}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label">Dosage</label>
                         <input
@@ -340,15 +487,32 @@ export default function NewVisitPage() {
                         />
                       </div>
                     </div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Instructions</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="e.g. 1 tablet after food, twice daily for 3 days"
-                        value={med.instructions}
-                        onChange={e => updateMedicine(i, 'instructions', e.target.value)}
-                      />
+
+                    <div className="form-row" style={{ marginBottom: 0 }}>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 2 }}>
+                        <label className="form-label">Instructions</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="e.g. 1 tablet after food, twice daily for 3 days"
+                          value={med.instructions}
+                          onChange={e => updateMedicine(i, 'instructions', e.target.value)}
+                        />
+                      </div>
+                      {med.medicine_id && (
+                        <div className="form-group" style={{ marginBottom: 0, maxWidth: '100px' }}>
+                          <label className="form-label">Qty</label>
+                          <input
+                            type="number"
+                            className="form-input"
+                            placeholder="1"
+                            min="1"
+                            max={med.stock_qty || 999}
+                            value={med.qty}
+                            onChange={e => updateMedicine(i, 'qty', Number(e.target.value) || 1)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))

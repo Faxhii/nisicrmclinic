@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   LayoutDashboard, Users, Calendar, CreditCard,
-  Clock, LogOut, Search, Menu, X, Settings
+  Clock, LogOut, Search, Menu, X, Settings, Pill
 } from 'lucide-react';
 import { getInitials } from '../utils/helpers';
 
@@ -11,6 +11,7 @@ const navItems = [
   { path: '/patients', icon: Users, label: 'Patients', permission: 'view_patients' },
   { path: '/appointments', icon: Calendar, label: 'Appointments', permission: 'view_appointments' },
   { path: '/payments', icon: CreditCard, label: 'Payments', permission: 'view_payments' },
+  { path: '/medicines', icon: Pill, label: 'Medicines', permission: 'view_medicines' },
   { path: '/follow-ups', icon: Clock, label: 'Follow-ups', permission: 'view_dashboard' },
   { path: '/settings', icon: Settings, label: 'Google Sheets & Sync', permission: 'view_dashboard' },
 ];

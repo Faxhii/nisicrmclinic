@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   Calendar, Users, CreditCard, Clock, UserPlus,
   CalendarPlus, FileText, DollarSign, Bell,
-  ChevronRight, Activity
+  ChevronRight, Activity, Pill, AlertTriangle
 } from 'lucide-react';
 import {
   DashboardService, AppointmentsService, FollowUpsService, PatientsService
@@ -116,9 +116,75 @@ export default function DashboardPage() {
               </div>
               Follow-ups
             </button>
+            <button className="quick-action-btn" onClick={() => navigate('/medicines')}>
+              <div className="quick-action-icon" style={{ background: '#ECFDF5', color: '#059669' }}>
+                <Pill size={18} />
+              </div>
+              Medicines Stock
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Low / Out of Stock Alert Banner */}
+      {(stats.lowStockMedicines > 0 || stats.outOfStockMedicines > 0) && (
+        <div style={{
+          background: stats.outOfStockMedicines > 0 ? '#FEF2F2' : '#FFFBEB',
+          border: `1px solid ${stats.outOfStockMedicines > 0 ? '#FCA5A5' : '#FDE68A'}`,
+          borderRadius: 'var(--radius-lg)',
+          padding: 'var(--space-4) var(--space-5)',
+          marginBottom: 'var(--space-6)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 'var(--space-3)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
+              background: stats.outOfStockMedicines > 0 ? '#FEE2E2' : '#FEF3C7',
+              color: stats.outOfStockMedicines > 0 ? '#DC2626' : '#D97706',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+            }}>
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <div style={{
+                fontWeight: 600,
+                fontSize: 'var(--font-size-sm)',
+                color: stats.outOfStockMedicines > 0 ? '#991B1B' : '#92400E'
+              }}>
+                Pharmacy Inventory Alert
+              </div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                {stats.outOfStockMedicines > 0 && (
+                  <span style={{ fontWeight: 600, color: '#DC2626', marginRight: '8px' }}>
+                    {stats.outOfStockMedicines} {stats.outOfStockMedicines === 1 ? 'medicine' : 'medicines'} out of stock
+                  </span>
+                )}
+                {stats.lowStockMedicines > 0 && (
+                  <span>
+                    {stats.lowStockMedicines} {stats.lowStockMedicines === 1 ? 'medicine' : 'medicines'} running low on stock
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <button
+            className="btn btn-sm"
+            onClick={() => navigate('/medicines')}
+            style={{
+              background: stats.outOfStockMedicines > 0 ? '#DC2626' : '#D97706',
+              color: '#FFFFFF',
+              border: 'none',
+              fontWeight: 600
+            }}
+          >
+            Manage Stock <ChevronRight size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Two Column Grid */}
       <div className="dashboard-grid">

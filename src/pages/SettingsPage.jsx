@@ -20,13 +20,14 @@ const GOOGLE_APPS_SCRIPT_CODE = `/**
  * NisiClinic Dental CRM — Google Apps Script Backend
  * ============================================================
  */
-const SHEET_NAMES = { PATIENTS: 'Patients', VISITS: 'Visits', APPOINTMENTS: 'Appointments', PAYMENTS: 'Payments' };
+const SHEET_NAMES = { PATIENTS: 'Patients', VISITS: 'Visits', APPOINTMENTS: 'Appointments', PAYMENTS: 'Payments', MEDICINES: 'Medicines' };
 
 const SCHEMAS = {
   Patients: ['patient_id', 'name', 'phone', 'age', 'gender', 'date_of_birth', 'address', 'medical_notes', 'allergies', 'emergency_contact', 'created_at', 'is_archived'],
   Visits: ['visit_id', 'patient_id', 'visit_date', 'complaint', 'diagnosis', 'clinical_notes', 'treatment', 'medicines_json', 'follow_up_date', 'total_amount', 'amount_paid', 'balance', 'created_by', 'created_at'],
   Appointments: ['appointment_id', 'patient_id', 'date', 'time', 'reason', 'dentist', 'status', 'notes', 'created_at'],
-  Payments: ['payment_id', 'patient_id', 'visit_id', 'amount', 'payment_method', 'payment_date', 'notes', 'created_at']
+  Payments: ['payment_id', 'patient_id', 'visit_id', 'amount', 'payment_method', 'payment_date', 'notes', 'created_at'],
+  Medicines: ['medicine_id', 'name', 'generic_name', 'category', 'dosage_form', 'strength', 'unit_price', 'stock_qty', 'reorder_level', 'expiry_date', 'manufacturer', 'notes', 'created_at', 'updated_at']
 };
 
 function getOrCreateSheet(sheetName) {
@@ -91,7 +92,8 @@ function doGet(e) {
           patients: readSheetData(SHEET_NAMES.PATIENTS),
           visits: readSheetData(SHEET_NAMES.VISITS),
           appointments: readSheetData(SHEET_NAMES.APPOINTMENTS),
-          payments: readSheetData(SHEET_NAMES.PAYMENTS)
+          payments: readSheetData(SHEET_NAMES.PAYMENTS),
+          medicines: readSheetData(SHEET_NAMES.MEDICINES)
         }
       });
     }
@@ -112,6 +114,7 @@ function doPost(e) {
       if (payload.data.visits) replaceSheet(SHEET_NAMES.VISITS, payload.data.visits, SCHEMAS.Visits);
       if (payload.data.appointments) replaceSheet(SHEET_NAMES.APPOINTMENTS, payload.data.appointments, SCHEMAS.Appointments);
       if (payload.data.payments) replaceSheet(SHEET_NAMES.PAYMENTS, payload.data.payments, SCHEMAS.Payments);
+      if (payload.data.medicines) replaceSheet(SHEET_NAMES.MEDICINES, payload.data.medicines, SCHEMAS.Medicines);
       return jsonResponse({ status: 'success', message: 'Synchronized all collections' });
     }
 

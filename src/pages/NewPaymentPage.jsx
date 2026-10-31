@@ -59,41 +59,33 @@ export default function NewPaymentPage() {
     if (!selectedPatient) { toast.error('Please select a patient.'); return; }
     if (!form.amount || Number(form.amount) <= 0) { toast.warning('Please enter a valid amount.'); return; }
 
+    const payAmount = Number(form.amount);
+
+    // Warn if paying more than outstanding (but still allow it)
+    if (outstanding > 0 && payAmount > outstanding) {
+      const proceed = window.confirm(
+        `The outstanding balance is only ${formatCurrency(outstanding)}, but you're recording ${formatCurrency(payAmount)}.\n\nDo you want to proceed?`
+      );
+      if (!proceed) return;
+    }
+
     setSaving(true);
     await new Promise(r => setTimeout(r, 400));
     try {
-      // Find the latest visit with balance for this patient, or fallback to their latest visit
-      const visits = VisitsService.getByPatient(selectedPatient.patient_id);
-      const targetVisit = visits.find(v => (Number(v.balance) || 0) > 0) || visits[0];
-
-      const payment = PaymentsService.create({
+      // Use cascading payment: clears oldest unpaid visit first, then next, etc.
+      PaymentsService.createWithCascade({
         patient_id: selectedPatient.patient_id,
-        visit_id: targetVisit?.visit_id || '',
-        amount: Number(form.amount),
+        amount: payAmount,
         payment_method: form.payment_method,
         payment_date: form.payment_date,
         notes: form.notes
       });
 
-      // Update the visit balance if associated
-      if (targetVisit) {
-        const currentTotal = Number(targetVisit.total_amount) || 0;
-        const newPaid = (Number(targetVisit.amount_paid) || 0) + Number(form.amount);
-        const newTotal = currentTotal > 0 ? currentTotal : Math.max(currentTotal, newPaid);
-        const newBalance = Math.max(0, newTotal - newPaid);
-
-        VisitsService.update(targetVisit.visit_id, {
-          total_amount: newTotal,
-          amount_paid: newPaid,
-          balance: newBalance
-        });
-      }
-
       try {
         window.dispatchEvent(new Event('nisiclinic_data_synced'));
       } catch {}
 
-      toast.success(`Payment of ${formatCurrency(form.amount)} recorded`);
+      toast.success(`Payment of ${formatCurrency(payAmount)} recorded`);
       navigate(`/patients/${selectedPatient.patient_id}`);
     } catch {
       toast.error('Something went wrong. Please try again.');

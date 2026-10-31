@@ -5,7 +5,7 @@ import {
   Calendar, CheckCircle2, Clock, ArrowUpRight, Search,
   PieChart, BarChart3, ChevronRight, Filter
 } from 'lucide-react';
-import { PaymentsService, PatientsService, VisitsService, reconcilePayments } from '../services/dataService';
+import { PaymentsService, PatientsService, VisitsService, MedicinesService, reconcilePayments } from '../services/dataService';
 import { formatCurrency, formatDate, formatDateShort, getInitials } from '../utils/helpers';
 
 export default function PaymentsPage() {
@@ -53,7 +53,9 @@ export default function PaymentsPage() {
     return visits.reduce((sum, v) => sum + (Number(v.balance) || 0), 0);
   }, [visits]);
 
-  const totalBilled = totalReceived + totalPending;
+  const totalBilled = useMemo(() => {
+    return visits.reduce((sum, v) => sum + (Number(v.total_amount) || 0), 0);
+  }, [visits]);
 
   const collectionRate = totalBilled > 0
     ? Math.min(100, Math.round((totalReceived / totalBilled) * 100))
@@ -254,8 +256,8 @@ export default function PaymentsPage() {
           </div>
           <div className="stat-card-sub">
             <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
-              {pendingVisits.length}
-            </span> {pendingVisits.length === 1 ? 'patient has' : 'patients have'} pending dues
+              {new Set(pendingVisits.map(v => v.patient_id)).size}
+            </span> {new Set(pendingVisits.map(v => v.patient_id)).size === 1 ? 'patient has' : 'patients have'} pending dues
           </div>
         </div>
 

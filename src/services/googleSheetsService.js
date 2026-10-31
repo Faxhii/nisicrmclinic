@@ -104,7 +104,7 @@ export const GoogleSheetsService = {
       throw new Error(res.message || 'Failed to retrieve data from Google Sheet.');
     }
 
-    const { patients: sheetPatients, visits: sheetVisits, appointments: sheetAppts, payments: sheetPayments } = res.data;
+    const { patients: sheetPatients, visits: sheetVisits, appointments: sheetAppts, payments: sheetPayments, medicines: sheetMedicines } = res.data;
 
     // Smart merge to preserve any items created locally on this device (e.g. on a new laptop) before connecting
     const mergeData = (storageKey, idField, sheetItems) => {
@@ -142,7 +142,7 @@ export const GoogleSheetsService = {
                   merged[key] = lVal;
                 }
                 // If financial amount (total_amount, amount_paid, balance, amount), prefer non-zero
-                else if (key === 'total_amount' || key === 'amount_paid' || key === 'balance' || key === 'amount') {
+                else if (key === 'total_amount' || key === 'amount_paid' || key === 'balance' || key === 'amount' || key === 'stock_qty') {
                   if (Number(lVal) > 0 && (Number(sVal) === 0 || isNaN(Number(sVal)))) {
                     merged[key] = Number(lVal);
                   }
@@ -174,18 +174,21 @@ export const GoogleSheetsService = {
     const vResult = mergeData('nisiclinic_visits', 'visit_id', sheetVisits);
     const aResult = mergeData('nisiclinic_appointments', 'appointment_id', sheetAppts);
     const payResult = mergeData('nisiclinic_payments', 'payment_id', sheetPayments);
+    const medResult = mergeData('nisiclinic_medicines', 'medicine_id', sheetMedicines);
 
     this.setLastSynced();
 
     // If there were local items not on the sheet, push them to the sheet so all devices receive them
     const hasLocalOnly = pResult.localOnly.length > 0 || vResult.localOnly.length > 0 || 
-                         aResult.localOnly.length > 0 || payResult.localOnly.length > 0;
+                         aResult.localOnly.length > 0 || payResult.localOnly.length > 0 ||
+                         medResult.localOnly.length > 0;
     if (hasLocalOnly && this.getAutoSync()) {
       this.pushToSheet({
         patients: pResult.merged,
         visits: vResult.merged,
         appointments: aResult.merged,
-        payments: payResult.merged
+        payments: payResult.merged,
+        medicines: medResult.merged
       }).catch(err => console.warn('Background sync back to sheet error:', err));
     }
 
@@ -197,7 +200,8 @@ export const GoogleSheetsService = {
       patientsCount: pResult.merged.length,
       visitsCount: vResult.merged.length,
       appointmentsCount: aResult.merged.length,
-      paymentsCount: payResult.merged.length
+      paymentsCount: payResult.merged.length,
+      medicinesCount: medResult.merged.length
     };
   },
 
@@ -212,7 +216,8 @@ export const GoogleSheetsService = {
         patients: data.patients || [],
         visits: data.visits || [],
         appointments: data.appointments || [],
-        payments: data.payments || []
+        payments: data.payments || [],
+        medicines: data.medicines || []
       }
     };
 

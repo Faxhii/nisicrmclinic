@@ -5,9 +5,9 @@ import { useToast } from '../contexts/ToastContext';
 import {
   Phone, MapPin, AlertTriangle, Calendar, FileText,
   CreditCard, ChevronRight, Plus, Clock, User,
-  Heart, Edit, Trash2, X, AlertCircle, Save, Check
+  Heart, Edit, Trash2, X, AlertCircle, Save, Check, Pill
 } from 'lucide-react';
-import { PatientsService, VisitsService, PaymentsService, AppointmentsService, reconcilePayments } from '../services/dataService';
+import { PatientsService, VisitsService, PaymentsService, AppointmentsService, MedicinesService, reconcilePayments } from '../services/dataService';
 import { formatCurrency, formatDate, formatTime, getInitials } from '../utils/helpers';
 import Modal from '../components/Modal';
 
@@ -118,14 +118,22 @@ export default function PatientProfilePage() {
   function handleAddMedicine() {
     setEditVisitForm(prev => ({
       ...prev,
-      medicines: [...prev.medicines, { name: '', dosage: '', instructions: '' }]
+      medicines: [...prev.medicines, { name: '', dosage: '', instructions: '', qty: 1, medicine_id: '' }]
     }));
   }
 
   function handleUpdateMedicine(index, field, value) {
     setEditVisitForm(prev => {
       const updated = [...prev.medicines];
-      updated[index] = { ...updated[index], [field]: value };
+      const current = { ...updated[index], [field]: value };
+      if (field === 'name') {
+        const found = MedicinesService.getAll().find(m => m.name.toLowerCase() === value.trim().toLowerCase());
+        if (found) {
+          current.medicine_id = found.medicine_id;
+          if (found.strength && !current.dosage) current.dosage = found.strength;
+        }
+      }
+      updated[index] = current;
       return { ...prev, medicines: updated };
     });
   }
@@ -530,23 +538,61 @@ export default function PatientProfilePage() {
                       </div>
                     )}
 
-                    {/* Medicines */}
+                    {/* Medicines Prescribed & Dispensed */}
                     {visit.medicines?.length > 0 && (
                       <div className="timeline-content-row">
-                        <span className="timeline-content-label">Medicine</span>
-                        <span className="timeline-content-value">
+                        <span className="timeline-content-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <Pill size={13} /> Medicines
+                        </span>
+                        <div className="timeline-content-value" style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' }}>
                           {visit.medicines.map((m, i) => (
-                            <div key={i} style={{ marginBottom: i < visit.medicines.length - 1 ? '4px' : 0 }}>
-                              <strong>{m.name}</strong>
-                              {m.dosage && ` — ${m.dosage}`}
-                              {m.instructions && (
-                                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                                  {m.instructions}
-                                </div>
-                              )}
+                            <div key={i} style={{
+                              padding: '8px 12px',
+                              borderRadius: 'var(--radius-md)',
+                              background: 'var(--color-bg)',
+                              border: '1px solid var(--color-border-light)',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                              gap: '6px'
+                            }}>
+                              <div>
+                                <span style={{ fontWeight: 600 }}>{m.name}</span>
+                                {m.dosage && (
+                                  <span style={{ color: 'var(--color-text-secondary)', marginLeft: '6px', fontSize: 'var(--font-size-xs)' }}>
+                                    · {m.dosage}
+                                  </span>
+                                )}
+                                {m.instructions && (
+                                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                                    {m.instructions}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {m.qty && (
+                                  <span style={{
+                                    fontSize: '11px', fontWeight: 600,
+                                    padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                                    background: 'var(--color-accent-light)', color: 'var(--color-accent)'
+                                  }}>
+                                    {m.qty} pcs
+                                  </span>
+                                )}
+                                {m.medicine_id && (
+                                  <span style={{
+                                    fontSize: '10px', fontWeight: 600,
+                                    padding: '1px 6px', borderRadius: 'var(--radius-full)',
+                                    background: 'var(--color-success-light)', color: 'var(--color-success-text)'
+                                  }}>
+                                    Stock
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           ))}
-                        </span>
+                        </div>
                       </div>
                     )}
 
@@ -855,7 +901,8 @@ export default function PatientProfilePage() {
                     <input
                       type="text"
                       className="form-input"
-                      placeholder="Medicine name"
+                      placeholder="Medicine name (from stock or custom)"
+                      list="edit-modal-medicines"
                       value={m.name}
                       onChange={e => handleUpdateMedicine(idx, 'name', e.target.value)}
                       style={{ flex: 2 }}
@@ -871,10 +918,20 @@ export default function PatientProfilePage() {
                     <input
                       type="text"
                       className="form-input"
-                      placeholder="Instructions (e.g. 1 tab after food 3x daily)"
+                      placeholder="Instructions (e.g. 1 tab after food)"
                       value={m.instructions}
                       onChange={e => handleUpdateMedicine(idx, 'instructions', e.target.value)}
                       style={{ flex: 2 }}
+                    />
+                    <input
+                      type="number"
+                      className="form-input"
+                      placeholder="Qty"
+                      min="1"
+                      value={m.qty || 1}
+                      onChange={e => handleUpdateMedicine(idx, 'qty', Number(e.target.value) || 1)}
+                      style={{ width: '70px', flexShrink: 0 }}
+                      title="Quantity dispensed"
                     />
                     <button
                       type="button"
@@ -889,6 +946,15 @@ export default function PatientProfilePage() {
                 ))}
               </div>
             )}
+
+            {/* Datalist for autocomplete */}
+            <datalist id="edit-modal-medicines">
+              {MedicinesService.getAll().map(med => (
+                <option key={med.medicine_id} value={med.name}>
+                  {med.name} ({med.strength ? `${med.strength}, ` : ''}Stock: {med.stock_qty})
+                </option>
+              ))}
+            </datalist>
           </div>
 
           {/* Financials & Balance */}

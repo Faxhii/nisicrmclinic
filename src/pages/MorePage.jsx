@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   CreditCard, Clock, Users, Calendar,
-  LogOut, Settings, FileText, Search, UserPlus
+  LogOut, Settings, FileText, Search, UserPlus, Pill
 } from 'lucide-react';
 
 export default function MorePage() {
@@ -11,6 +11,7 @@ export default function MorePage() {
 
   const items = [
     { icon: Settings, label: 'Google Sheets & Settings', path: '/settings', color: 'var(--color-accent)' },
+    { icon: Pill, label: 'Medicines & Inventory', path: '/medicines', color: '#059669' },
     { icon: CreditCard, label: 'Payments', path: '/payments', color: 'var(--color-success)' },
     { icon: Clock, label: 'Follow-ups', path: '/follow-ups', color: 'var(--color-info)' },
     { icon: UserPlus, label: 'New Patient', path: '/patients/new', color: 'var(--color-accent)' },

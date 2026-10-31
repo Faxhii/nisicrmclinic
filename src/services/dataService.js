@@ -353,7 +353,8 @@ export const AppointmentsService = {
 
 export const PaymentsService = {
   getAll() {
-    reconcilePayments();
+    // NOTE: Do NOT call reconcilePayments() here — it's called at page load.
+    // Calling it inside getAll() caused double-reconciliation bugs.
     return getAll('payments').sort((a, b) => 
       new Date(b.payment_date) - new Date(a.payment_date)
     );
@@ -385,6 +386,44 @@ export const PaymentsService = {
     return result;
   },
 
+  /**
+   * Record a standalone payment for a patient, cascading across their
+   * unpaid visits (oldest first) so the balance is properly cleared.
+   */
+  createWithCascade(paymentData) {
+    const patientId = paymentData.patient_id;
+    let remaining = Number(paymentData.amount) || 0;
+    if (remaining <= 0) return null;
+
+    // Get visits with balance > 0, sorted oldest first (FIFO)
+    const visits = getAll('visits')
+      .filter(v => v.patient_id === patientId && (Number(v.balance) || 0) > 0)
+      .sort((a, b) => new Date(a.visit_date) - new Date(b.visit_date));
+
+    const payment = this.create(paymentData);
+
+    for (const visit of visits) {
+      if (remaining <= 0) break;
+      const balance = Number(visit.balance) || 0;
+      const applyAmount = Math.min(remaining, balance);
+      const newPaid = (Number(visit.amount_paid) || 0) + applyAmount;
+      const newBalance = Math.max(0, (Number(visit.total_amount) || 0) - newPaid);
+
+      update('visits', visit.visit_id, {
+        amount_paid: newPaid,
+        balance: newBalance
+      }, 'visit_id');
+      GoogleSheetsService.syncSingle('updateVisit', {
+        visit_id: visit.visit_id,
+        updates: { amount_paid: newPaid, balance: newBalance }
+      });
+
+      remaining -= applyAmount;
+    }
+
+    return payment;
+  },
+
   getTodaysPayments() {
     const today = new Date().toISOString().split('T')[0];
     return getAll('payments').filter(p => p.payment_date === today);
@@ -396,6 +435,142 @@ export const PaymentsService = {
 
   getTotalPaidByPatient(patientId) {
     return this.getByPatient(patientId).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  },
+
+  /** Correct total billed — sum of visit total_amount, not payments + pending */
+  getTotalBilled() {
+    return getAll('visits').reduce((sum, v) => sum + (Number(v.total_amount) || 0), 0);
+  }
+};
+
+// ============================================================
+// Medicines Inventory Service
+// ============================================================
+
+export const MedicinesService = {
+  getAll() {
+    return getAll('medicines').sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  },
+
+  getById(medicineId) {
+    return getById('medicines', medicineId, 'medicine_id');
+  },
+
+  search(query) {
+    const meds = this.getAll();
+    const q = (query || '').toLowerCase().trim();
+    if (!q) return meds;
+    return meds.filter(m =>
+      (m.name || '').toLowerCase().includes(q) ||
+      (m.category || '').toLowerCase().includes(q) ||
+      (m.medicine_id || '').toLowerCase().includes(q)
+    );
+  },
+
+  getInStock() {
+    return this.getAll().filter(m => (Number(m.stock_qty) || 0) > 0);
+  },
+
+  getLowStock(threshold = 10) {
+    return this.getAll().filter(m => {
+      const qty = Number(m.stock_qty) || 0;
+      return qty > 0 && qty <= threshold;
+    });
+  },
+
+  getOutOfStock() {
+    return this.getAll().filter(m => (Number(m.stock_qty) || 0) <= 0);
+  },
+
+  getExpiringSoon(daysAhead = 30) {
+    const cutoff = new Date(Date.now() + daysAhead * 86400000).toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
+    return this.getAll().filter(m =>
+      m.expiry_date && m.expiry_date >= today && m.expiry_date <= cutoff
+    );
+  },
+
+  create(medData) {
+    const medicine = {
+      medicine_id: generateId('MED'),
+      name: medData.name || '',
+      generic_name: medData.generic_name || '',
+      category: medData.category || 'General',
+      dosage_form: medData.dosage_form || 'Tablet',
+      strength: medData.strength || '',
+      unit_price: Number(medData.unit_price) || 0,
+      stock_qty: Number(medData.stock_qty) || 0,
+      reorder_level: Number(medData.reorder_level) || 10,
+      expiry_date: medData.expiry_date || '',
+      manufacturer: medData.manufacturer || '',
+      notes: medData.notes || '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const result = create('medicines', medicine);
+    GoogleSheetsService.syncSingle('createMedicine', { medicine: result });
+    return result;
+  },
+
+  update(medicineId, updates) {
+    updates.updated_at = new Date().toISOString();
+    const result = update('medicines', medicineId, updates, 'medicine_id');
+    GoogleSheetsService.syncSingle('updateMedicine', { medicine_id: medicineId, updates });
+    return result;
+  },
+
+  delete(medicineId) {
+    const result = remove('medicines', medicineId, 'medicine_id');
+    GoogleSheetsService.syncSingle('deleteMedicine', { medicine_id: medicineId });
+    return result;
+  },
+
+  /**
+   * Adjust stock quantity. Positive = add stock, negative = deduct stock.
+   * Returns the updated medicine or null if insufficient stock.
+   */
+  adjustStock(medicineId, quantityChange, reason = '') {
+    const med = this.getById(medicineId);
+    if (!med) return null;
+    const currentQty = Number(med.stock_qty) || 0;
+    const newQty = currentQty + quantityChange;
+    if (newQty < 0) return null; // Cannot go below zero
+
+    // Log the stock adjustment
+    const logs = getAll('stock_logs');
+    logs.push({
+      log_id: generateId('STK'),
+      medicine_id: medicineId,
+      medicine_name: med.name,
+      previous_qty: currentQty,
+      change: quantityChange,
+      new_qty: newQty,
+      reason: reason,
+      timestamp: new Date().toISOString()
+    });
+    saveAll('stock_logs', logs);
+
+    return this.update(medicineId, { stock_qty: newQty });
+  },
+
+  /**
+   * Deduct stock for medicines dispensed during a visit.
+   * Each dispensed item: { medicine_id, name, dosage, instructions, qty }
+   */
+  deductForVisit(dispensedMedicines, visitId, patientId) {
+    if (!Array.isArray(dispensedMedicines)) return;
+    dispensedMedicines.forEach(med => {
+      if (med.medicine_id) {
+        const qty = Number(med.qty) || 1;
+        this.adjustStock(med.medicine_id, -qty, `Dispensed for visit ${visitId} (patient ${patientId})`);
+      }
+    });
+  },
+
+  getStockLogs(medicineId = null) {
+    const logs = getAll('stock_logs').sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    if (medicineId) return logs.filter(l => l.medicine_id === medicineId);
+    return logs;
   }
 };
 
@@ -467,7 +642,9 @@ export const DashboardService = {
       todaysRevenue: PaymentsService.getTodaysRevenue(),
       pendingPayments: pendingPayments,
       totalPatients: allPatients.length,
-      todaysFollowUps: FollowUpsService.getTodaysFollowUps().length
+      todaysFollowUps: FollowUpsService.getTodaysFollowUps().length,
+      lowStockMedicines: MedicinesService.getLowStock().length,
+      outOfStockMedicines: MedicinesService.getOutOfStock().length
     };
   },
 
@@ -528,12 +705,13 @@ export const AuthService = {
         'view_dashboard', 'view_patients', 'add_patients', 'view_patient_detail',
         'view_clinical_notes', 'create_visits', 'edit_visits', 'view_visits',
         'view_payments', 'add_payments', 'view_appointments', 'create_appointments',
-        'edit_appointments', 'view_followups', 'manage_records'
+        'edit_appointments', 'view_followups', 'manage_records',
+        'view_medicines', 'manage_medicines'
       ],
       receptionist: [
         'view_dashboard', 'view_patients', 'add_patients', 'view_patient_basic',
         'view_payments', 'add_payments', 'view_appointments', 'create_appointments',
-        'edit_appointments'
+        'edit_appointments', 'view_medicines'
       ]
     };
 
@@ -647,6 +825,22 @@ export function seedDemoData() {
     { payment_id: 'PAY_006', patient_id: 'PAT_006', visit_id: 'VIS_006', amount: 500, payment_method: 'UPI', payment_date: twoDaysAgo, notes: 'Consultation fee', created_at: new Date(Date.now() - 2 * 86400000).toISOString() },
   ];
   saveAll('payments', payments);
+
+  // Medicines inventory
+  const medicines = [
+    { medicine_id: 'MED_001', name: 'Paracetamol 500mg', generic_name: 'Acetaminophen', category: 'Analgesic', dosage_form: 'Tablet', strength: '500mg', unit_price: 5, stock_qty: 200, reorder_level: 50, expiry_date: '2027-06-15', manufacturer: 'Cipla', notes: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_002', name: 'Amoxicillin 500mg', generic_name: 'Amoxicillin', category: 'Antibiotic', dosage_form: 'Capsule', strength: '500mg', unit_price: 12, stock_qty: 150, reorder_level: 30, expiry_date: '2027-03-20', manufacturer: 'Sun Pharma', notes: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_003', name: 'Ibuprofen 400mg', generic_name: 'Ibuprofen', category: 'NSAID', dosage_form: 'Tablet', strength: '400mg', unit_price: 8, stock_qty: 100, reorder_level: 25, expiry_date: '2027-08-10', manufacturer: 'Abbott', notes: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_004', name: 'Chlorhexidine Mouthwash 0.2%', generic_name: 'Chlorhexidine Gluconate', category: 'Antiseptic', dosage_form: 'Liquid', strength: '0.2%', unit_price: 120, stock_qty: 45, reorder_level: 10, expiry_date: '2027-12-01', manufacturer: 'Colgate', notes: 'For post-procedure rinse', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_005', name: 'Metronidazole 400mg', generic_name: 'Metronidazole', category: 'Antibiotic', dosage_form: 'Tablet', strength: '400mg', unit_price: 10, stock_qty: 80, reorder_level: 20, expiry_date: '2027-05-30', manufacturer: 'Alkem', notes: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_006', name: 'Clindamycin 300mg', generic_name: 'Clindamycin', category: 'Antibiotic', dosage_form: 'Capsule', strength: '300mg', unit_price: 18, stock_qty: 60, reorder_level: 15, expiry_date: '2027-09-15', manufacturer: 'Cipla', notes: 'For penicillin-allergic patients', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_007', name: 'Sensodyne Toothpaste', generic_name: 'Potassium Nitrate', category: 'Dental Care', dosage_form: 'Paste', strength: '5%', unit_price: 150, stock_qty: 30, reorder_level: 10, expiry_date: '2028-01-01', manufacturer: 'GSK', notes: 'Recommend for sensitive teeth', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_008', name: 'Diclofenac Gel', generic_name: 'Diclofenac Diethylamine', category: 'Topical NSAID', dosage_form: 'Gel', strength: '1%', unit_price: 85, stock_qty: 8, reorder_level: 10, expiry_date: '2027-04-20', manufacturer: 'Novartis', notes: 'Low stock - reorder soon', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_009', name: 'Ketorolac 10mg', generic_name: 'Ketorolac Tromethamine', category: 'Analgesic', dosage_form: 'Tablet', strength: '10mg', unit_price: 15, stock_qty: 0, reorder_level: 20, expiry_date: '2027-07-15', manufacturer: 'Dr. Reddy\'s', notes: 'Out of stock', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { medicine_id: 'MED_010', name: 'Lignocaine 2% Injection', generic_name: 'Lidocaine', category: 'Local Anesthetic', dosage_form: 'Injection', strength: '2%', unit_price: 25, stock_qty: 120, reorder_level: 30, expiry_date: '2027-11-01', manufacturer: 'Neon Labs', notes: 'Dental cartridges', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  ];
+  saveAll('medicines', medicines);
+  saveAll('stock_logs', []);
 }
 
 // Clear all demo data so doctor can operate on empty, real data
@@ -656,6 +850,8 @@ export function clearAllData() {
   localStorage.removeItem(STORAGE_PREFIX + 'visits');
   localStorage.removeItem(STORAGE_PREFIX + 'appointments');
   localStorage.removeItem(STORAGE_PREFIX + 'payments');
+  localStorage.removeItem(STORAGE_PREFIX + 'medicines');
+  localStorage.removeItem(STORAGE_PREFIX + 'stock_logs');
   return true;
 }
 
@@ -666,6 +862,8 @@ export function restoreDemoData() {
   localStorage.removeItem(STORAGE_PREFIX + 'visits');
   localStorage.removeItem(STORAGE_PREFIX + 'appointments');
   localStorage.removeItem(STORAGE_PREFIX + 'payments');
+  localStorage.removeItem(STORAGE_PREFIX + 'medicines');
+  localStorage.removeItem(STORAGE_PREFIX + 'stock_logs');
   seedDemoData();
   return true;
 }
@@ -683,8 +881,10 @@ export function getAllDataForExport() {
     visits: getAll('visits'),
     appointments: getAll('appointments'),
     payments: getAll('payments'),
+    medicines: getAll('medicines'),
+    stock_logs: getAll('stock_logs'),
     exported_at: new Date().toISOString(),
-    version: '1.0'
+    version: '1.1'
   };
 }
 
@@ -703,6 +903,12 @@ export function importAllDataFromJson(jsonStr) {
     }
     if (data.payments && Array.isArray(data.payments)) {
       saveAll('payments', data.payments);
+    }
+    if (data.medicines && Array.isArray(data.medicines)) {
+      saveAll('medicines', data.medicines);
+    }
+    if (data.stock_logs && Array.isArray(data.stock_logs)) {
+      saveAll('stock_logs', data.stock_logs);
     }
     localStorage.removeItem(STORAGE_PREFIX + 'demo_cleared');
     return { success: true };
